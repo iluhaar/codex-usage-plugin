@@ -1,11 +1,19 @@
 {
   "name": "codex-usage-plugin",
   "version": "0.2.1",
+  "license": "MIT",
   "private": true,
   "type": "module",
   "bin": {
     "codex-usage-plugin": "dist/bin/codex-usage-plugin.js"
   },
+  "keywords": [
+    "opencode",
+    "codex",
+    "plugin",
+    "quota",
+    "tui"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "install-plugin": "npm run build && node dist/bin/codex-usage-plugin.js --install",
