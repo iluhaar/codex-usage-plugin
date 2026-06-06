@@ -194,7 +194,7 @@ function renderLimitRows(usage: UsagePayload) {
     const remaining = clamp(numberValue(individual.remaining_percent), 0, 100);
     const detail = formatCreditUsage(individual.used, individual.limit);
     rows.push(
-      `- Monthly credit limit: ${progress(remaining)} ${remaining.toFixed(0)}% left${resetSuffix(individual.reset_at)}${detail ? ` (${detail})` : ""}`,
+      `- Monthly credit limit: ${statusIndicator(remaining)} ${progress(remaining)} ${remaining.toFixed(0)}% left${resetSuffix(individual.reset_at)}${detail ? ` (${detail})` : ""}`,
     );
   }
 
@@ -219,7 +219,7 @@ function renderWindowRows(
     const used = clamp(numberValue(entry.window.used_percent), 0, 100);
     const remaining = 100 - used;
     rows.push(
-      `- ${fullLabel}: ${progress(remaining)} ${remaining.toFixed(0)}% left${resetSuffix(entry.window.reset_at)}`,
+      `- ${fullLabel}: ${statusIndicator(remaining)} ${progress(remaining)} ${remaining.toFixed(0)}% left${resetSuffix(entry.window.reset_at)}`,
     );
   }
   return rows;
@@ -241,7 +241,8 @@ function renderToastWindows(
     ).replace(/ limit$/i, "");
     const fullLabel = prefix ? `${prefix} ${label}` : label;
     const used = clamp(numberValue(entry.window.used_percent), 0, 100);
-    rows.push(`${fullLabel}: ${(100 - used).toFixed(0)}% left`);
+    const remaining = 100 - used;
+    rows.push(`${fullLabel}: ${statusIndicator(remaining)} ${remaining.toFixed(0)}% left`);
   }
   return rows;
 }
@@ -314,6 +315,12 @@ function progress(remaining: number) {
     Math.max(0, Math.round((remaining / 100) * width)),
   );
   return `[${"█".repeat(filled)}${"░".repeat(width - filled)}]`;
+}
+
+function statusIndicator(remaining: number) {
+  if (remaining < 20) return "🔴";
+  if (remaining < 50) return "🟡";
+  return "🟢";
 }
 
 function numberValue(value: unknown) {
