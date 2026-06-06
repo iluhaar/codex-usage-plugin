@@ -266,10 +266,20 @@ async function writeConfig(
   action: "install" | "uninstall",
 ) {
   const current = await readConfig(target.path);
-  const next =
-    current === undefined
-      ? freshConfig(target, action)
-      : updateConfigContent(current, target, action);
+  if (current === undefined) {
+    if (action === "uninstall") {
+      process.stdout.write(`No changes needed: ${target.path}\n`);
+      return;
+    }
+
+    const next = freshConfig(target, action);
+    await mkdir(dirname(target.path), { recursive: true });
+    await writeFile(target.path, next, "utf8");
+    process.stdout.write(`Updated: ${target.path}\n`);
+    return;
+  }
+
+  const next = updateConfigContent(current, target, action);
 
   if (next === current) {
     process.stdout.write(`No changes needed: ${target.path}\n`);

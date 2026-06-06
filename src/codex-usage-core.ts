@@ -92,7 +92,17 @@ async function fetchJson<T>(
   url: string,
   auth: CodexAuthFile,
   idToken: IdTokenInfo,
+  timeoutMs = 10_000,
 ): Promise<T> {
+  const controller = new AbortController();
+  const timeoutId =
+    timeoutMs > 0
+      ? setTimeout(
+          () => controller.abort(new Error(`Request timed out after ${timeoutMs}ms`)),
+          timeoutMs,
+        )
+      : undefined;
+
   const headers: Record<string, string> = {
     Authorization: `Bearer ${auth.tokens?.access_token ?? ""}`,
     "User-Agent": "codex-usage-opencode-plugin",
@@ -101,20 +111,24 @@ async function fetchJson<T>(
   if (accountId) headers["ChatGPT-Account-ID"] = accountId;
   if (idToken.chatgpt_account_is_fedramp) headers["X-OpenAI-Fedramp"] = "true";
 
-  const response = await fetch(url, { headers });
-  if (!response.ok) {
-    const body = await response.text().catch(() => "");
-    const safeBody = body
-      .slice(0, 500)
-      .replace(
-        /[A-Za-z0-9_-]{24,}\.[A-Za-z0-9_-]{24,}\.[A-Za-z0-9_-]{24,}/g,
-        "<redacted-jwt>",
+  try {
+    const response = await fetch(url, { headers, signal: controller.signal });
+    if (!response.ok) {
+      const body = await response.text().catch(() => "");
+      const safeBody = body
+        .slice(0, 500)
+        .replace(
+          /[A-Za-z0-9_-]{24,}\.[A-Za-z0-9_-]{24,}\.[A-Za-z0-9_-]{24,}/g,
+          "<redacted-jwt>",
+        );
+      throw new Error(
+        `${url} failed with HTTP ${response.status}${safeBody ? `: ${safeBody}` : ""}`,
       );
-    throw new Error(
-      `${url} failed with HTTP ${response.status}${safeBody ? `: ${safeBody}` : ""}`,
-    );
+    }
+    return (await response.json()) as T;
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
   }
-  return (await response.json()) as T;
 }
 
 function renderUsage(
@@ -342,14 +356,25 @@ function formatCreditUsage(
   return `${Math.round(usedNumber).toLocaleString()} of ${Math.round(limitNumber).toLocaleString()} credits used`;
 }
 
-export async function getCodexUsage() {
+export async function getCodexUsage(options?: { requestTimeoutMs?: number }) {
   const home = codexHome();
   const auth = await readCodexAuth(home);
   const idToken = decodeIdToken(auth);
-  const usage = await fetchJson<UsagePayload>(USAGE_URL, auth, idToken);
+  const requestTimeoutMs = options?.requestTimeoutMs ?? 10_000;
+  const usage = await fetchJson<UsagePayload>(
+    USAGE_URL,
+    auth,
+    idToken,
+    requestTimeoutMs,
+  );
   let profile: TokenUsageProfile | undefined;
   try {
-    profile = await fetchJson<TokenUsageProfile>(PROFILE_URL, auth, idToken);
+    profile = await fetchJson<TokenUsageProfile>(
+      PROFILE_URL,
+      auth,
+      idToken,
+      requestTimeoutMs,
+    );
   } catch {
     profile = undefined;
   }

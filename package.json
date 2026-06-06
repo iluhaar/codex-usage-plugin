@@ -19,7 +19,9 @@
     "install-plugin": "npm run build && node dist/bin/codex-usage-plugin.js --install",
     "uninstall-plugin": "node dist/bin/codex-usage-plugin.js --uninstall",
     "lint": "oxlint .",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "pretest": "npm run build",
+    "test": "node --test test/plugin.test.mjs"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
