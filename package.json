@@ -1,0 +1,16 @@
+{
+  "name": "codex-usage-plugin",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "lint": "oxlint .",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@opencode-ai/plugin": "latest",
+    "oxlint": "^1.0.0",
+    "typescript": "^5.9.3"
+  }
+}
