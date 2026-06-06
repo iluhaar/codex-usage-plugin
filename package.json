@@ -1,9 +1,15 @@
 {
   "name": "codex-usage-plugin",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
+  "bin": {
+    "codex-usage-plugin": "dist/bin/codex-usage-plugin.js"
+  },
   "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "install-plugin": "npm run build && node dist/bin/codex-usage-plugin.js --install",
+    "uninstall-plugin": "node dist/bin/codex-usage-plugin.js --uninstall",
     "lint": "oxlint .",
     "typecheck": "tsc --noEmit"
   },

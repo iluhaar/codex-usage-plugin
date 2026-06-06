@@ -1,13 +1,13 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "module": "ESNext",
-    "moduleResolution": "Bundler",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
     "strict": true,
     "noEmit": true,
     "skipLibCheck": true,
     "types": ["node"],
     "allowImportingTsExtensions": false
   },
-  "include": [".opencode/**/*.ts"]
+  "include": ["src/**/*.ts"]
 }
