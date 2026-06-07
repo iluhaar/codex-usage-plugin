@@ -41,6 +41,71 @@ await test("install writes the plugin path", async () => {
   assert.match(content, /dist\/index\.js/);
 });
 
+await test("usage fetch reads OpenCode auth path", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "codex-usage-plugin-"));
+  const authHome = join(dir, ".local", "share", "opencode");
+  const authPath = join(authHome, "auth.json");
+  const originalEnv = {
+    OPENCODE_AUTH_PATH: process.env.OPENCODE_AUTH_PATH,
+    OPENCODE_CODEX_QUOTA_MODEL: process.env.OPENCODE_CODEX_QUOTA_MODEL,
+  };
+
+  await mkdir(authHome, { recursive: true });
+  await writeFile(
+    authPath,
+    JSON.stringify({ openai: { access: "token", accountId: "acct-123" } }),
+    "utf8",
+  );
+
+  process.env.OPENCODE_AUTH_PATH = authPath;
+  process.env.OPENCODE_CODEX_QUOTA_MODEL = "gpt-5.5";
+
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init = {}) => {
+    calls.push({ url: String(url), init });
+
+    if (String(url).includes("/codex/responses")) {
+      return new Response("data: {\"type\":\"response.completed\"}\n\n", {
+        status: 200,
+        headers: {
+          "content-type": "text/event-stream",
+          "x-codex-primary-used-percent": "12",
+          "x-codex-secondary-used-percent": "34",
+        },
+      });
+    }
+
+    if (String(url).includes("/profiles/me")) {
+      return new Response(JSON.stringify({ stats: { lifetime_tokens: 123 } }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+
+    return new Response(JSON.stringify({ models: [{ slug: "gpt-5.5" }] }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+
+  try {
+    const { getCodexUsage } = await import(distCoreUrl);
+    const result = await getCodexUsage({ requestTimeoutMs: 100 });
+
+    assert.equal(calls.length, 2);
+    assert.match(result.markdown, /Workspace account: acct-123/);
+    assert.match(result.markdown, /Source: https:\/\/chatgpt\.com\/codex\/settings\/usage/);
+    assert.equal(calls[0].init.headers.Authorization, "Bearer token");
+    assert.equal(calls[0].init.headers["ChatGPT-Account-ID"], "acct-123");
+    assert.match(calls[1].url, /\/profiles\/me$/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    process.env.OPENCODE_AUTH_PATH = originalEnv.OPENCODE_AUTH_PATH;
+    process.env.OPENCODE_CODEX_QUOTA_MODEL = originalEnv.OPENCODE_CODEX_QUOTA_MODEL;
+  }
+});
+
 await test("usage fetch times out", async () => {
   const dir = await mkdtemp(join(tmpdir(), "codex-usage-plugin-"));
   const codexHome = join(dir, ".codex");

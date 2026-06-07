@@ -14,23 +14,101 @@ function codexHome() {
   return join(homedir(), ".codex");
 }
 
-async function readCodexAuth(home: string) {
-  const authPath = join(home, "auth.json");
-  if (!existsSync(authPath)) {
-    throw new Error(`Codex auth file not found at ${authPath}.`);
+function openCodeAuthPath() {
+  const fromEnv = process.env.OPENCODE_AUTH_PATH?.trim();
+  if (fromEnv) return resolve(fromEnv);
+
+  if (process.platform === "darwin") {
+    return join(homedir(), "Library", "Application Support", "opencode", "auth.json");
   }
 
-  const raw = await readFile(authPath, "utf8");
-  const auth = JSON.parse(raw) as CodexAuthFile;
-  if (!auth.tokens?.access_token) {
-    if (auth.OPENAI_API_KEY) {
-      throw new Error(
-        "Codex is configured with an API key. ChatGPT/Codex OAuth auth is required to read usage limits.",
-      );
-    }
-    throw new Error("Codex auth.json does not contain ChatGPT OAuth tokens.");
+  const xdgDataHome = process.env.XDG_DATA_HOME?.trim() || join(homedir(), ".local", "share");
+  return join(xdgDataHome, "opencode", "auth.json");
+}
+
+function codexAuthPath() {
+  return join(codexHome(), "auth.json");
+}
+
+function normalizeAuthFile(raw: unknown): CodexAuthFile | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+
+  const parsed = raw as Record<string, unknown>;
+  const tokens = parsed.tokens as Record<string, unknown> | undefined;
+  const accessToken = stringValue(tokens?.access_token);
+  if (accessToken) {
+    return {
+      auth_mode: stringValue(parsed.auth_mode),
+      OPENAI_API_KEY:
+        typeof parsed.OPENAI_API_KEY === "string" ? parsed.OPENAI_API_KEY : undefined,
+      tokens: {
+        id_token: tokens?.id_token as string | IdTokenInfo | undefined,
+        access_token: accessToken,
+        refresh_token: stringValue(tokens?.refresh_token),
+        account_id: stringValue(tokens?.account_id),
+      },
+    };
   }
+
+  const openai = parsed.openai as Record<string, unknown> | undefined;
+  const openaiAccess = stringValue(openai?.access);
+  if (openaiAccess) {
+    return {
+      tokens: {
+        access_token: openaiAccess,
+        account_id: stringValue(openai?.accountId),
+      },
+    };
+  }
+
+  return undefined;
+}
+
+async function readAuthFile(authPath: string) {
+  if (!existsSync(authPath)) return undefined;
+
+  const raw = await readFile(authPath, "utf8");
+  const parsed = JSON.parse(raw) as unknown;
+  if (
+    parsed &&
+    typeof parsed === "object" &&
+    typeof (parsed as { OPENAI_API_KEY?: unknown }).OPENAI_API_KEY === "string" &&
+    stringValue((parsed as { OPENAI_API_KEY?: unknown }).OPENAI_API_KEY)
+  ) {
+    throw new Error(
+      "Codex is configured with an API key. ChatGPT/Codex OAuth auth is required to read usage limits.",
+    );
+  }
+
+  const auth = normalizeAuthFile(parsed);
+  if (!auth?.tokens?.access_token) {
+    throw new Error(`Auth file at ${authPath} does not contain ChatGPT OAuth tokens.`);
+  }
+
   return auth;
+}
+
+async function readAuth() {
+  const authPaths = [
+    openCodeAuthPath(),
+    join(homedir(), ".local", "share", "opencode", "auth.json"),
+    join(homedir(), ".opencode", "auth.json"),
+    join(process.env.LOCALAPPDATA?.trim() || join(homedir(), "AppData", "Local"), "OpenCode", "auth.json"),
+    codexAuthPath(),
+  ];
+  let lastError: Error | undefined;
+
+  for (const authPath of authPaths) {
+    try {
+      const auth = await readAuthFile(authPath);
+      if (auth) return auth;
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+    }
+  }
+
+  if (lastError) throw lastError;
+  throw new Error(`Auth file not found at ${authPaths.join(" or ")}.`);
 }
 
 function decodeIdToken(auth: CodexAuthFile): IdTokenInfo {
@@ -357,8 +435,7 @@ function formatCreditUsage(
 }
 
 export async function getCodexUsage(options?: { requestTimeoutMs?: number }) {
-  const home = codexHome();
-  const auth = await readCodexAuth(home);
+  const auth = await readAuth();
   const idToken = decodeIdToken(auth);
   const requestTimeoutMs = options?.requestTimeoutMs ?? 10_000;
   const usage = await fetchJson<UsagePayload>(
