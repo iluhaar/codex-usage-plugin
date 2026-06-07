@@ -163,6 +163,7 @@ await test("usage fetch times out", async () => {
   const dir = await mkdtemp(join(tmpdir(), "codex-usage-plugin-"));
   const codexHome = join(dir, ".codex");
   const authPath = join(codexHome, "auth.json");
+  const originalCodexHome = process.env.CODEX_HOME;
 
   await mkdir(codexHome, { recursive: true });
   await writeFile(
@@ -170,6 +171,7 @@ await test("usage fetch times out", async () => {
     JSON.stringify({ tokens: { access_token: "token" } }),
     "utf8",
   );
+  process.env.CODEX_HOME = codexHome;
 
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (_url, init = {}) =>
@@ -191,5 +193,7 @@ await test("usage fetch times out", async () => {
     );
   } finally {
     globalThis.fetch = originalFetch;
+    if (originalCodexHome === undefined) delete process.env.CODEX_HOME;
+    else process.env.CODEX_HOME = originalCodexHome;
   }
 });
