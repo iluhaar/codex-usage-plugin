@@ -129,7 +129,7 @@ await test("usage fetch prefers OAuth token when auth file also has API key", as
   process.env.OPENCODE_CODEX_QUOTA_MODEL = "gpt-5.5";
 
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = async (url, init = {}) => {
+  globalThis.fetch = async (url, _init = {}) => {
     if (String(url).includes("/profiles/me")) {
       return new Response(JSON.stringify({ stats: { lifetime_tokens: 321 } }), {
         status: 200,
