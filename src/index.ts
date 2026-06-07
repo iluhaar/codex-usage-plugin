@@ -30,12 +30,13 @@ export default {
       config: async (config) => {
         config.command ??= {};
         config.command["codex-usage"] = {
-          description: "Show Codex usage limits and credits without using the LLM",
+          description: "Show Codex usage limits and credits",
           template: "",
         };
       },
       "command.execute.before": async (input) => {
-        if (input.command !== "codex-usage" && input.command !== "/codex-usage") return;
+        if (input.command !== "codex-usage" && input.command !== "/codex-usage")
+          return;
         try {
           await showCodexUsageToast();
         } catch (error) {
