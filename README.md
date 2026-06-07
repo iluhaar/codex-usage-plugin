@@ -4,21 +4,32 @@ OpenCode plugin that exposes a `/codex-usage` TUI command for viewing Codex Chat
 
 ## Usage
 
-1. Make sure OpenCode is connected to your ChatGPT Plus/Pro plan.
-2. Install the plugin into global OpenCode config:
+1. Install the package globally:
 
    ```sh
-   npm run install-plugin
+   npm install -g codex-usage-plugin
+   ```
+
+2. Register the plugin in OpenCode:
+
+   ```sh
+   codex-usage-plugin --install
    ```
 
    This builds `dist/` and registers the generated plugin path in `~/.config/opencode/opencode.jsonc`.
 3. Restart OpenCode so it loads `dist/index.js`.
 4. Run `/codex-usage` in the OpenCode TUI.
 
-To remove the global registration:
+To remove the plugin registration:
 
 ```sh
-npm run uninstall-plugin
+codex-usage-plugin --uninstall
+```
+
+To remove the npm package too:
+
+```sh
+npm uninstall -g codex-usage-plugin
 ```
 
 The `/codex-usage` slash command is registered and handled by the plugin through OpenCode's server plugin hooks. It shows an OpenCode toast.
@@ -45,3 +56,7 @@ It calls the same ChatGPT backend usage surfaces Codex uses:
 Plugin supports file-backed OpenCode/Codex auth only. If your client stores tokens in the OS keyring, the plugin will report that `auth.json` is unavailable. Keyring support can be added later.
 
 The plugin never prints access tokens, refresh tokens, or ID tokens.
+
+## Publishing
+
+Maintainers publish by pushing a tag like `v0.2.2`. The release workflow runs tests and publishes the package to npm automatically.
