@@ -69,7 +69,9 @@ async function readAuthFile(authPath: string) {
 
   const raw = await readFile(authPath, "utf8");
   const parsed = JSON.parse(raw) as unknown;
+  const auth = normalizeAuthFile(parsed);
   if (
+    !auth?.tokens?.access_token &&
     parsed &&
     typeof parsed === "object" &&
     typeof (parsed as { OPENAI_API_KEY?: unknown }).OPENAI_API_KEY === "string" &&
@@ -80,7 +82,6 @@ async function readAuthFile(authPath: string) {
     );
   }
 
-  const auth = normalizeAuthFile(parsed);
   if (!auth?.tokens?.access_token) {
     throw new Error(`Auth file at ${authPath} does not contain ChatGPT OAuth tokens.`);
   }
