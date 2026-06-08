@@ -56,9 +56,3 @@ It calls the same ChatGPT backend usage surfaces Codex uses:
 Plugin supports file-backed OpenCode/Codex auth only. If your client stores tokens in the OS keyring, the plugin will report that `auth.json` is unavailable. Keyring support can be added later.
 
 The plugin never prints access tokens, refresh tokens, or ID tokens.
-
-## Publishing
-
-Maintainers publish by pushing a tag like `v0.2.2`. The release workflow runs tests and publishes the package to npm automatically.
-
-This uses npm trusted publishing, so no `NPM_TOKEN` secret is needed. The npm package must be configured to trust this GitHub repository for publishing.
