@@ -1,9 +1,26 @@
 {
-  "name": "codex-usage-plugin",
+  "name": "@illiadotdev/codex-usage-plugin",
   "version": "0.2.1",
   "license": "MIT",
-  "private": true,
+  "description": "OpenCode plugin for viewing Codex ChatGPT usage limits and credits.",
+  "private": false,
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/iluhaar/codex-usage-plugin.git"
+  },
+  "homepage": "https://github.com/iluhaar/codex-usage-plugin#readme",
+  "bugs": {
+    "url": "https://github.com/iluhaar/codex-usage-plugin/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist/",
+    "README.md",
+    "LICENSE"
+  ],
   "bin": {
     "codex-usage-plugin": "dist/bin/codex-usage-plugin.js"
   },
@@ -16,6 +33,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "prepack": "npm run build",
     "install-plugin": "npm run build && node dist/bin/codex-usage-plugin.js --install",
     "uninstall-plugin": "node dist/bin/codex-usage-plugin.js --uninstall",
     "lint": "oxlint .",
