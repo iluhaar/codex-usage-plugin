@@ -7,7 +7,7 @@ OpenCode plugin that exposes a `/codex-usage` TUI command for viewing Codex Chat
 1. Install the package globally:
 
    ```sh
-   npm install -g codex-usage-plugin
+   npm install -g @illiadotdev/codex-usage-plugin
    ```
 
 2. Register the plugin in OpenCode:
@@ -29,7 +29,7 @@ codex-usage-plugin --uninstall
 To remove the npm package too:
 
 ```sh
-npm uninstall -g codex-usage-plugin
+npm uninstall -g @illiadotdev/codex-usage-plugin
 ```
 
 The `/codex-usage` slash command is registered and handled by the plugin through OpenCode's server plugin hooks. It shows an OpenCode toast.
@@ -60,3 +60,5 @@ The plugin never prints access tokens, refresh tokens, or ID tokens.
 ## Publishing
 
 Maintainers publish by pushing a tag like `v0.2.2`. The release workflow runs tests and publishes the package to npm automatically.
+
+This uses npm trusted publishing, so no `NPM_TOKEN` secret is needed. The npm package must be configured to trust this GitHub repository for publishing.

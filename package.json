@@ -1,5 +1,5 @@
 {
-  "name": "codex-usage-plugin",
+  "name": "@illiadotdev/codex-usage-plugin",
   "version": "0.2.1",
   "license": "MIT",
   "description": "OpenCode plugin for viewing Codex ChatGPT usage limits and credits.",
@@ -12,6 +12,9 @@
   "homepage": "https://github.com/iluhaar/codex-usage-plugin#readme",
   "bugs": {
     "url": "https://github.com/iluhaar/codex-usage-plugin/issues"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "files": [
     "dist/",
