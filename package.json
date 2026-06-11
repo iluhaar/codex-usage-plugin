@@ -1,6 +1,6 @@
 {
   "name": "@illiadotdev/codex-usage-plugin",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "license": "MIT",
   "description": "OpenCode plugin for viewing Codex ChatGPT usage limits and credits.",
   "private": false,
@@ -41,9 +41,11 @@
     "pretest": "npm run build",
     "test": "node --test test/plugin.test.mjs"
   },
+  "dependencies": {
+    "@opencode-ai/plugin": "latest"
+  },
   "devDependencies": {
     "@types/node": "^24.0.0",
-    "@opencode-ai/plugin": "latest",
     "oxlint": "^1.0.0",
     "typescript": "^5.9.3"
   }
