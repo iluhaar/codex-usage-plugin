@@ -11,6 +11,7 @@ const execFileAsync = promisify(execFile);
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 const cliPath = join(repoRoot, "dist", "bin", "codex-usage-plugin.js");
 const distCoreUrl = pathToFileURL(join(repoRoot, "dist", "codex-usage-core.js")).href;
+const distPluginUrl = pathToFileURL(join(repoRoot, "dist", "index.js")).href;
 
 async function runCli(args, env = {}) {
   return execFileAsync(process.execPath, [cliPath, ...args], {
@@ -195,5 +196,77 @@ await test("usage fetch times out", async () => {
     globalThis.fetch = originalFetch;
     if (originalCodexHome === undefined) delete process.env.CODEX_HOME;
     else process.env.CODEX_HOME = originalCodexHome;
+  }
+});
+
+await test("slash command is handled without throwing", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "codex-usage-plugin-"));
+  const authHome = join(dir, ".local", "share", "opencode");
+  const authPath = join(authHome, "auth.json");
+  const originalEnv = {
+    OPENCODE_AUTH_PATH: process.env.OPENCODE_AUTH_PATH,
+  };
+
+  await mkdir(authHome, { recursive: true });
+  await writeFile(
+    authPath,
+    JSON.stringify({ openai: { access: "token", accountId: "acct-789" } }),
+    "utf8",
+  );
+
+  process.env.OPENCODE_AUTH_PATH = authPath;
+
+  const toasts = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    if (String(url).includes("/profiles/me")) {
+      return new Response(JSON.stringify({ stats: { lifetime_tokens: 999 } }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+
+    return new Response(
+      JSON.stringify({
+        rate_limit: {
+          primary_window: {
+            used_percent: 25,
+            limit_window_seconds: 18_000,
+          },
+        },
+      }),
+      {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      },
+    );
+  };
+
+  try {
+    const plugin = (await import(distPluginUrl)).default;
+    const hooks = await plugin.server({
+      client: {
+        tui: {
+          showToast: async ({ body }) => {
+            toasts.push(body);
+          },
+        },
+      },
+    });
+
+    const output = { parts: [{ type: "text", text: "should clear" }] };
+    await assert.doesNotReject(() =>
+      hooks["command.execute.before"](
+        { command: "/codex-usage", sessionID: "s", arguments: "" },
+        output,
+      ),
+    );
+
+    assert.deepEqual(output.parts, []);
+    assert.equal(toasts.length, 2);
+    assert.match(toasts[1].message, /5h: .+75% left/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    process.env.OPENCODE_AUTH_PATH = originalEnv.OPENCODE_AUTH_PATH;
   }
 });

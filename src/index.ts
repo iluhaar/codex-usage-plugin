@@ -34,7 +34,7 @@ export default {
           template: "",
         };
       },
-      "command.execute.before": async (input) => {
+      "command.execute.before": async (input, output) => {
         if (input.command !== "codex-usage" && input.command !== "/codex-usage")
           return;
         try {
@@ -50,7 +50,7 @@ export default {
           });
           throw error;
         }
-        throw new Error("codex-usage:handled");
+        output.parts = [];
       },
       tool: {
         codex_usage: tool({
