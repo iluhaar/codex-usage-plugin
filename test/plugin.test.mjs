@@ -12,6 +12,7 @@ const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 const cliPath = join(repoRoot, "dist", "bin", "codex-usage-plugin.js");
 const distCoreUrl = pathToFileURL(join(repoRoot, "dist", "codex-usage-core.js")).href;
 const distPluginUrl = pathToFileURL(join(repoRoot, "dist", "index.js")).href;
+const distTuiPluginUrl = pathToFileURL(join(repoRoot, "dist", "tui.js")).href;
 
 async function runCli(args, env = {}) {
   return execFileAsync(process.execPath, [cliPath, ...args], {
@@ -33,13 +34,23 @@ await test("uninstall does not create a missing config", async () => {
 await test("install writes the plugin path", async () => {
   const dir = await mkdtemp(join(tmpdir(), "codex-usage-plugin-"));
   const configPath = join(dir, "opencode.jsonc");
+  const tuiConfigPath = join(dir, "tui.json");
 
-  const result = await runCli(["--install", "--config", configPath]);
+  const result = await runCli([
+    "--install",
+    "--config",
+    configPath,
+    "--tui-config",
+    tuiConfigPath,
+  ]);
   const content = await readFile(configPath, "utf8");
+  const tuiContent = await readFile(tuiConfigPath, "utf8");
 
   assert.match(result.stdout, /Updated:/);
   assert.match(content, /"plugin"\s*:\s*\[/);
   assert.match(content, /dist\/index\.js/);
+  assert.match(tuiContent, /"plugin"\s*:\s*\[/);
+  assert.match(tuiContent, /dist\/tui\.js/);
 });
 
 await test("usage fetch reads OpenCode auth path", async () => {
@@ -199,7 +210,14 @@ await test("usage fetch times out", async () => {
   }
 });
 
-await test("slash command is handled without throwing", async () => {
+await test("server plugin exposes codex_usage tool", async () => {
+  const plugin = (await import(distPluginUrl)).default;
+  const hooks = await plugin.server({ client: {} });
+
+  assert.equal(typeof hooks.tool.codex_usage.execute, "function");
+});
+
+await test("tui slash command shows usage toast without chat output", async () => {
   const dir = await mkdtemp(join(tmpdir(), "codex-usage-plugin-"));
   const authHome = join(dir, ".local", "share", "opencode");
   const authPath = join(authHome, "auth.json");
@@ -217,6 +235,7 @@ await test("slash command is handled without throwing", async () => {
   process.env.OPENCODE_AUTH_PATH = authPath;
 
   const toasts = [];
+  let registeredCommands = [];
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (url) => {
     if (String(url).includes("/profiles/me")) {
@@ -243,26 +262,28 @@ await test("slash command is handled without throwing", async () => {
   };
 
   try {
-    const plugin = (await import(distPluginUrl)).default;
-    const hooks = await plugin.server({
-      client: {
-        tui: {
-          showToast: async ({ body }) => {
-            toasts.push(body);
-          },
+    const plugin = (await import(distTuiPluginUrl)).default;
+    await plugin.tui({
+      command: {
+        register: (cb) => {
+          registeredCommands = cb();
+          return () => {};
+        },
+      },
+      ui: {
+        toast: (body) => {
+          toasts.push(body);
         },
       },
     });
 
-    const output = { parts: [{ type: "text", text: "should clear" }] };
-    await assert.doesNotReject(() =>
-      hooks["command.execute.before"](
-        { command: "/codex-usage", sessionID: "s", arguments: "" },
-        output,
-      ),
+    const command = registeredCommands.find(
+      (entry) => entry.slash?.name === "codex-usage",
     );
 
-    assert.deepEqual(output.parts, []);
+    assert.ok(command);
+    await assert.doesNotReject(() => command.onSelect());
+
     assert.equal(toasts.length, 2);
     assert.match(toasts[1].message, /5h: .+75% left/);
   } finally {

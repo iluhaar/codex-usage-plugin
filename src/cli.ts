@@ -9,10 +9,10 @@ const helpText = () =>
     "",
     "Options:",
     "  -h, --help                  Show this help message",
-    "  --install                   Add built plugin path to global OpenCode config",
-    "  --uninstall                 Remove plugin path from global OpenCode config",
+    "  --install                   Add built plugin paths to global OpenCode/TUI configs",
+    "  --uninstall                 Remove plugin paths from global OpenCode/TUI configs",
     "  --config <path>             Server OpenCode config path",
-    "  --tui-config <path>         TUI config path to clean old registrations",
+    "  --tui-config <path>         TUI config path",
     "",
     "Examples:",
     "  codex-usage-plugin --install",
@@ -307,7 +307,7 @@ async function cleanupConfigIfExists(target: ConfigTarget) {
   process.stdout.write(`Removed old registration from: ${target.path}\n`);
 }
 
-function configTargets(options: CliOptions): ConfigTarget[] {
+function serverConfigTargets(options: CliOptions): ConfigTarget[] {
   const root = repoRootFromDist();
   return [
     {
@@ -339,6 +339,10 @@ function tuiCleanupTarget(options: CliOptions): ConfigTarget {
   };
 }
 
+function tuiConfigTargets(options: CliOptions): ConfigTarget[] {
+  return [tuiCleanupTarget(options)];
+}
+
 export async function runCli(argv = process.argv.slice(2)) {
   const options = parseCliOptions(argv);
   if (options.help || (!options.install && !options.uninstall)) {
@@ -348,8 +352,8 @@ export async function runCli(argv = process.argv.slice(2)) {
 
   const action = options.install ? "install" : "uninstall";
   await Promise.all([
-    ...configTargets(options).map((target) => writeConfig(target, action)),
-    cleanupConfigIfExists(tuiCleanupTarget(options)),
+    ...serverConfigTargets(options).map((target) => writeConfig(target, action)),
+    ...tuiConfigTargets(options).map((target) => writeConfig(target, action)),
   ]);
 }
 
