@@ -1,6 +1,6 @@
 # Codex Usage Plugin for OpenCode
 
-OpenCode plugin that exposes a `/codex-usage` TUI command for viewing Codex ChatGPT usage limits and credits. It also keeps a `codex_usage` tool for manual/debug agent use.
+OpenCode plugin that exposes a `/codex-usage` TUI command and `<leader>i` shortcut for viewing Codex ChatGPT usage limits and credits. It also keeps a `codex_usage` tool for manual/debug agent use.
 
 ## Usage
 
@@ -18,7 +18,7 @@ OpenCode plugin that exposes a `/codex-usage` TUI command for viewing Codex Chat
 
    This builds `dist/` and registers the generated plugin path in `~/.config/opencode/opencode.jsonc`.
 3. Restart OpenCode.
-4. Run `/codex-usage` in the OpenCode TUI.
+4. Run `/codex-usage` in the OpenCode TUI, or press the leader key then `i` (`ctrl+x` then `i` by default).
 
 To remove the plugin registration:
 
