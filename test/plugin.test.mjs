@@ -217,6 +217,38 @@ await test("server plugin exposes codex_usage tool", async () => {
   assert.equal(typeof hooks.tool.codex_usage.execute, "function");
 });
 
+await test("tui plugin registers leader+i shortcut", async () => {
+  const plugin = (await import(distTuiPluginUrl)).default;
+  let registeredLayer;
+  let disposeRegistered = false;
+
+  await plugin.tui({
+    keymap: {
+      registerLayer: (layer) => {
+        registeredLayer = layer;
+        return () => {};
+      },
+    },
+    lifecycle: {
+      onDispose: () => {
+        disposeRegistered = true;
+        return () => {};
+      },
+    },
+    ui: {
+      toast: () => {},
+    },
+  });
+
+  assert.ok(registeredLayer);
+  assert.equal(registeredLayer.commands[0].name, "codex-usage.show");
+  assert.equal(registeredLayer.commands[0].namespace, "palette");
+  assert.equal(registeredLayer.commands[0].slashName, "codex-usage");
+  assert.equal(registeredLayer.bindings[0].key, "<leader>i");
+  assert.equal(registeredLayer.bindings[0].cmd, "codex-usage.show");
+  assert.equal(disposeRegistered, true);
+});
+
 await test("tui slash command shows usage toast without chat output", async () => {
   const dir = await mkdtemp(join(tmpdir(), "codex-usage-plugin-"));
   const authHome = join(dir, ".local", "share", "opencode");
@@ -282,6 +314,7 @@ await test("tui slash command shows usage toast without chat output", async () =
     );
 
     assert.ok(command);
+    assert.equal(command.keybind, "<leader>i");
     await assert.doesNotReject(() => command.onSelect());
 
     assert.equal(toasts.length, 2);
