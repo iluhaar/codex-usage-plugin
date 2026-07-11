@@ -32,6 +32,15 @@ To remove the npm package too:
 npm uninstall -g @illiadotdev/codex-usage-plugin
 ```
 
+To upgrade the installed package:
+
+```sh
+codex-usage-plugin --upgrade
+codex-usage-plugin --upgrade 0.2.9
+```
+
+This runs `npm install -g @illiadotdev/codex-usage-plugin@latest` by default, or installs the version you pass.
+
 ## What It Reads
 
 The plugin reads auth from:

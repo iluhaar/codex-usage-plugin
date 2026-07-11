@@ -1,7 +1,12 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile);
+const packageName = "@illiadotdev/codex-usage-plugin";
 
 const helpText = () =>
   [
@@ -11,12 +16,15 @@ const helpText = () =>
     "  -h, --help                  Show this help message",
     "  --install                   Add built plugin paths to global OpenCode/TUI configs",
     "  --uninstall                 Remove plugin paths from global OpenCode/TUI configs",
+    "  --upgrade [version]         Upgrade the installed package version (defaults to latest)",
     "  --config <path>             Server OpenCode config path",
     "  --tui-config <path>         TUI config path",
     "",
     "Examples:",
     "  codex-usage-plugin --install",
     "  codex-usage-plugin --uninstall",
+    "  codex-usage-plugin --upgrade",
+    "  codex-usage-plugin --upgrade 0.2.9",
   ].join("\n");
 
 function moduleDistDir() {
@@ -47,7 +55,12 @@ function defaultTuiConfigPath() {
 }
 
 function parseCliOptions(argv: string[]): CliOptions {
-  const options: CliOptions = { help: false, install: false, uninstall: false };
+  const options: CliOptions = {
+    help: false,
+    install: false,
+    uninstall: false,
+    upgrade: false,
+  };
 
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
@@ -61,6 +74,15 @@ function parseCliOptions(argv: string[]): CliOptions {
     }
     if (arg === "--uninstall") {
       options.uninstall = true;
+      continue;
+    }
+    if (arg === "--upgrade") {
+      options.upgrade = true;
+      const value = argv[index + 1];
+      if (value && !value.startsWith("--")) {
+        options.upgradeVersion = value;
+        index += 1;
+      }
       continue;
     }
     if (arg === "--config" || arg === "--tui-config") {
@@ -80,12 +102,30 @@ function parseCliOptions(argv: string[]): CliOptions {
       options.tuiConfigPath = resolve(arg.slice("--tui-config=".length));
       continue;
     }
+    if (arg.startsWith("--upgrade=")) {
+      options.upgrade = true;
+      options.upgradeVersion = arg.slice("--upgrade=".length) || undefined;
+      continue;
+    }
     throw new Error(`unknown option: ${arg}`);
   }
 
   if (options.install && options.uninstall)
     throw new Error("--install and --uninstall cannot be combined");
+  if (options.upgrade && (options.install || options.uninstall))
+    throw new Error("--upgrade cannot be combined with --install or --uninstall");
   return options;
+}
+
+async function upgradeInstalledPackage(version?: string) {
+  const target = version ? `${packageName}@${version}` : `${packageName}@latest`;
+
+  await execFileAsync("npm", ["install", "-g", target], {
+    cwd: repoRootFromDist(),
+    shell: true,
+  });
+
+  process.stdout.write(`Upgraded ${packageName} to ${version ?? "latest"}\n`);
 }
 
 function findMatchingBracket(text: string, openIndex: number) {
@@ -345,8 +385,13 @@ function tuiConfigTargets(options: CliOptions): ConfigTarget[] {
 
 export async function runCli(argv = process.argv.slice(2)) {
   const options = parseCliOptions(argv);
-  if (options.help || (!options.install && !options.uninstall)) {
+  if (options.help || (!options.install && !options.uninstall && !options.upgrade)) {
     process.stdout.write(`${helpText()}\n`);
+    return;
+  }
+
+  if (options.upgrade) {
+    await upgradeInstalledPackage(options.upgradeVersion);
     return;
   }
 

@@ -2,6 +2,8 @@ type CliOptions = {
   help: boolean;
   install: boolean;
   uninstall: boolean;
+  upgrade: boolean;
+  upgradeVersion?: string;
   opencodeConfigPath?: string;
   tuiConfigPath?: string;
 };
