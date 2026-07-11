@@ -318,7 +318,7 @@ await test("tui slash command animates the native toast without chat output", as
     await assert.doesNotReject(() => command.onSelect());
 
     assert.equal(toasts[0].title, "Fetching Codex Usage");
-    assert.match(toasts[0].message, /^[■⬝]{8}$/);
+    assert.match(toasts[0].message, /^[🟦🔹]{8}$/u);
     assert.match(toasts.at(-1).message, /5h: .+75% left/);
   } finally {
     globalThis.fetch = originalFetch;
@@ -390,7 +390,7 @@ await test("tui usage command ignores concurrent invocations", async () => {
     await fetchStarted;
     assert.equal(fetchCount, 1);
     assert.equal(toasts[0].title, "Fetching Codex Usage");
-    assert.match(toasts[0].message, /^[■⬝]{8}$/);
+    assert.match(toasts[0].message, /^[🟦🔹]{8}$/u);
     await second;
     resolveFetch();
     await first;

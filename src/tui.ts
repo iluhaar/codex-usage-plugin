@@ -5,6 +5,9 @@ import { getCodexUsage } from "./codex-usage-core.js";
 const commandName = "codex-usage.show";
 const shortcut = "<leader>i";
 const width = 8;
+const intervalMs = 80;
+const activeBlock = "🟦";
+const inactiveBlock = "🔹";
 
 const scannerFrames = [
   ...Array.from({ length: width }, (_, head) => head),
@@ -12,7 +15,7 @@ const scannerFrames = [
   ...Array.from({ length: width - 1 }, (_, index) => width - index - 2),
   ...Array.from({ length: 30 }, () => 0),
 ].map((head) =>
-  Array.from({ length: width }, (_, index) => (index === head ? "■" : "⬝")).join(""),
+  Array.from({ length: width }, (_, index) => (index === head ? activeBlock : inactiveBlock)).join(""),
 );
 
 export default {
@@ -45,7 +48,7 @@ export default {
       };
 
       showLoading();
-      if (animated) animation = setInterval(showLoading, 40);
+      if (animated) animation = setInterval(showLoading, intervalMs);
 
       try {
         const result = await getCodexUsage();
