@@ -249,7 +249,7 @@ await test("tui plugin registers leader+i shortcut", async () => {
   assert.equal(disposeRegistered, true);
 });
 
-await test("tui slash command shows usage toast without chat output", async () => {
+await test("tui slash command animates the native toast without chat output", async () => {
   const dir = await mkdtemp(join(tmpdir(), "codex-usage-plugin-"));
   const authHome = join(dir, ".local", "share", "opencode");
   const authPath = join(authHome, "auth.json");
@@ -317,10 +317,88 @@ await test("tui slash command shows usage toast without chat output", async () =
     assert.equal(command.keybind, "<leader>i");
     await assert.doesNotReject(() => command.onSelect());
 
-    assert.equal(toasts.length, 2);
-    assert.match(toasts[1].message, /5h: .+75% left/);
+    assert.equal(toasts[0].title, "Fetching Codex Usage");
+    assert.match(toasts[0].message, /^[■⬝]{8}$/);
+    assert.match(toasts.at(-1).message, /5h: .+75% left/);
   } finally {
     globalThis.fetch = originalFetch;
     process.env.OPENCODE_AUTH_PATH = originalEnv.OPENCODE_AUTH_PATH;
+  }
+});
+
+await test("tui usage command ignores concurrent invocations", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "codex-usage-plugin-"));
+  const authPath = join(dir, "auth.json");
+  const originalAuthPath = process.env.OPENCODE_AUTH_PATH;
+  const originalFetch = globalThis.fetch;
+  let resolveFetch;
+  let markFetchStarted;
+  const fetchStarted = new Promise((resolve) => {
+    markFetchStarted = resolve;
+  });
+  let fetchCount = 0;
+  let registeredCommands = [];
+  const toasts = [];
+  let first;
+
+  await writeFile(
+    authPath,
+    JSON.stringify({ openai: { access: "token", accountId: "acct-789" } }),
+    "utf8",
+  );
+  process.env.OPENCODE_AUTH_PATH = authPath;
+  globalThis.fetch = async (url) => {
+    fetchCount += 1;
+    if (String(url).includes("/profiles/me")) {
+      return new Response(JSON.stringify({}), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    markFetchStarted();
+    await new Promise((resolve) => {
+      resolveFetch = resolve;
+    });
+    return new Response(JSON.stringify({ rate_limit: {} }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+
+  try {
+    const plugin = (await import(distTuiPluginUrl)).default;
+    await plugin.tui({
+      command: {
+        register: (cb) => {
+          registeredCommands = cb();
+          return () => {};
+        },
+      },
+      ui: {
+        toast: (body) => {
+          toasts.push(body);
+        },
+      },
+    });
+
+    const command = registeredCommands.find(
+      (entry) => entry.slash?.name === "codex-usage",
+    );
+    first = command.onSelect();
+    const second = command.onSelect();
+
+    await fetchStarted;
+    assert.equal(fetchCount, 1);
+    assert.equal(toasts[0].title, "Fetching Codex Usage");
+    assert.match(toasts[0].message, /^[■⬝]{8}$/);
+    await second;
+    resolveFetch();
+    await first;
+  } finally {
+    resolveFetch?.();
+    await first?.catch(() => {});
+    globalThis.fetch = originalFetch;
+    if (originalAuthPath === undefined) delete process.env.OPENCODE_AUTH_PATH;
+    else process.env.OPENCODE_AUTH_PATH = originalAuthPath;
   }
 });
