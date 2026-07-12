@@ -21,7 +21,7 @@ async function runCli(args, env = {}) {
   });
 }
 
-async function withFakeNpm(testFn) {
+async function withFakeNpm(testFn, targetVersion = "0.2.15") {
   const dir = await mkdtemp(join(tmpdir(), "codex-usage-plugin-npm-"));
   const argsFile = join(dir, "upgrade-args.txt");
   const cwdFile = join(dir, "upgrade-cwd.txt");
@@ -29,7 +29,7 @@ async function withFakeNpm(testFn) {
 
   await writeFile(
     npmCmdPath,
-    "@echo off\r\n> \"%UPGRADE_ARGS_FILE%\" echo %*\r\n> \"%UPGRADE_CWD_FILE%\" cd\r\nexit /b 0\r\n",
+    "@echo off\r\n>> \"%UPGRADE_ARGS_FILE%\" echo %*\r\n> \"%UPGRADE_CWD_FILE%\" cd\r\nif \"%1\"==\"view\" echo \"%UPGRADE_TARGET_VERSION%\"\r\nexit /b 0\r\n",
     "utf8",
   );
 
@@ -37,6 +37,7 @@ async function withFakeNpm(testFn) {
     PATH: `${dir};${process.env.PATH ?? ""}`,
     UPGRADE_ARGS_FILE: argsFile,
     UPGRADE_CWD_FILE: cwdFile,
+    UPGRADE_TARGET_VERSION: targetVersion,
   };
 
   await testFn({ argsFile, cwdFile, env });
@@ -142,7 +143,29 @@ await test("upgrade installs the requested package version", async () => {
     assert.match(args, /install -g @illiadotdev\/codex-usage-plugin@0\.2\.9/);
     assert.match(result.stdout, /Installing @illiadotdev\/codex-usage-plugin@0\.2\.9\.\.\./);
     assert.match(result.stdout, /Upgraded @illiadotdev\/codex-usage-plugin to 0\.2\.9/);
-  });
+  }, "0.2.9");
+});
+
+await test("upgrade skips install when latest is already installed", async () => {
+  await withFakeNpm(async ({ argsFile, env }) => {
+    const result = await runCli(["--upgrade"], env);
+    const args = await readFile(argsFile, "utf8");
+
+    assert.match(args, /view @illiadotdev\/codex-usage-plugin@latest version --json/);
+    assert.doesNotMatch(args, /install -g/);
+    assert.match(result.stdout, /already up to date \(0\.2\.14\)/);
+  }, "0.2.14");
+});
+
+await test("upgrade skips install when requested version is already installed", async () => {
+  await withFakeNpm(async ({ argsFile, env }) => {
+    const result = await runCli(["--upgrade", "0.2.14"], env);
+    const args = await readFile(argsFile, "utf8");
+
+    assert.match(args, /view @illiadotdev\/codex-usage-plugin@0\.2\.14 version --json/);
+    assert.doesNotMatch(args, /install -g/);
+    assert.match(result.stdout, /already up to date \(0\.2\.14\)/);
+  }, "0.2.14");
 });
 
 await test("upgrade cannot be combined with install", async () => {

@@ -143,6 +143,31 @@ function parseCliOptions(argv: string[]): CliOptions {
 
 async function upgradeInstalledPackage(version?: string) {
   const target = version ? `${packageName}@${version}` : `${packageName}@latest`;
+  const packageJson = JSON.parse(
+    await readFile(join(repoRootFromDist(), "package.json"), "utf8"),
+  ) as { version?: unknown };
+  if (typeof packageJson.version !== "string") {
+    throw new Error(`Could not determine the installed ${packageName} version`);
+  }
+
+  const { stdout } = await execFileAsync(
+    "npm",
+    ["view", target, "version", "--json"],
+    {
+      cwd: homedir(),
+      shell: true,
+    },
+  );
+  const resolved = JSON.parse(stdout) as unknown;
+  const targetVersion = Array.isArray(resolved) ? resolved.at(-1) : resolved;
+  if (typeof targetVersion !== "string") {
+    throw new Error(`Could not resolve the target ${packageName} version`);
+  }
+
+  if (packageJson.version === targetVersion) {
+    process.stdout.write(`${packageName} is already up to date (${targetVersion})\n`);
+    return;
+  }
 
   await withScanner(`Installing ${target}`, async () => {
     await execFileAsync("npm", ["install", "-g", target], {

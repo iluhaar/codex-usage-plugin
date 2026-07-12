@@ -39,7 +39,7 @@ codex-usage-plugin --upgrade
 codex-usage-plugin --upgrade 0.2.9
 ```
 
-This runs `npm install -g @illiadotdev/codex-usage-plugin@latest` by default, or installs the version you pass.
+This checks the resolved npm version first, then runs `npm install -g @illiadotdev/codex-usage-plugin@latest` by default, or installs the version you pass. Installation is skipped when that version is already installed.
 
 ## What It Reads
 
