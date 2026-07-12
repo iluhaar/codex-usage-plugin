@@ -122,7 +122,8 @@ async function upgradeInstalledPackage(version?: string) {
   const target = version ? `${packageName}@${version}` : `${packageName}@latest`;
 
   await execFileAsync("npm", ["install", "-g", target], {
-    cwd: repoRootFromDist(),
+    // npm cannot replace the installed package on Windows while cwd is inside it.
+    cwd: homedir(),
     shell: true,
   });
 
