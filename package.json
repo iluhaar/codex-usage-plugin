@@ -5,6 +5,9 @@
   "description": "OpenCode plugin for viewing Codex ChatGPT usage limits and credits.",
   "private": false,
   "type": "module",
+  "exports": {
+    ".": "./dist/index.js"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/iluhaar/codex-usage-plugin.git"
