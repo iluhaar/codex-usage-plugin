@@ -5,7 +5,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
-import { scannerFrames, scannerIntervalMs } from "./scanner-animation.js";
+import { scannerIntervalMs, terminalScannerFrames } from "./scanner-animation.js";
 
 const execFileAsync = promisify(execFile);
 const packageName = "@illiadotdev/codex-usage-plugin";
@@ -64,10 +64,10 @@ async function withScanner<T>(message: string, operation: () => Promise<T>) {
   }
 
   let frame = 0;
-  process.stdout.write(`${scannerFrames[frame]} ${message}`);
+  process.stdout.write(`${terminalScannerFrames[frame]} ${message}`);
   const animation = setInterval(() => {
-    frame = (frame + 1) % scannerFrames.length;
-    process.stdout.write(`\r${scannerFrames[frame]} ${message}`);
+    frame = (frame + 1) % terminalScannerFrames.length;
+    process.stdout.write(`\r${terminalScannerFrames[frame]} ${message}`);
   }, scannerIntervalMs);
 
   try {
