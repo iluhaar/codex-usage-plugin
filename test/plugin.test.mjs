@@ -21,6 +21,25 @@ async function runCli(args, env = {}) {
   });
 }
 
+async function withFakeNpm(testFn) {
+  const dir = await mkdtemp(join(tmpdir(), "codex-usage-plugin-npm-"));
+  const argsFile = join(dir, "upgrade-args.txt");
+  const npmCmdPath = join(dir, "npm.cmd");
+
+  await writeFile(
+    npmCmdPath,
+    "@echo off\r\n> \"%UPGRADE_ARGS_FILE%\" echo %*\r\nexit /b 0\r\n",
+    "utf8",
+  );
+
+  const env = {
+    PATH: `${dir};${process.env.PATH ?? ""}`,
+    UPGRADE_ARGS_FILE: argsFile,
+  };
+
+  await testFn({ argsFile, env });
+}
+
 await test("uninstall does not create a missing config", async () => {
   const dir = await mkdtemp(join(tmpdir(), "codex-usage-plugin-"));
   const configPath = join(dir, "opencode.jsonc");
@@ -51,6 +70,30 @@ await test("install writes the plugin path", async () => {
   assert.match(content, /dist\/index\.js/);
   assert.match(tuiContent, /"plugin"\s*:\s*\[/);
   assert.match(tuiContent, /dist\/tui\.js/);
+});
+
+await test("upgrade installs the latest package version", async () => {
+  await withFakeNpm(async ({ argsFile, env }) => {
+    const result = await runCli(["--upgrade"], env);
+    const args = await readFile(argsFile, "utf8");
+
+    assert.match(args, /install -g @illiadotdev\/codex-usage-plugin@latest/);
+    assert.match(result.stdout, /Upgraded @illiadotdev\/codex-usage-plugin to latest/);
+  });
+});
+
+await test("upgrade installs the requested package version", async () => {
+  await withFakeNpm(async ({ argsFile, env }) => {
+    const result = await runCli(["--upgrade", "0.2.9"], env);
+    const args = await readFile(argsFile, "utf8");
+
+    assert.match(args, /install -g @illiadotdev\/codex-usage-plugin@0\.2\.9/);
+    assert.match(result.stdout, /Upgraded @illiadotdev\/codex-usage-plugin to 0\.2\.9/);
+  });
+});
+
+await test("upgrade cannot be combined with install", async () => {
+  await assert.rejects(() => runCli(["--install", "--upgrade"]), /cannot be combined/);
 });
 
 await test("usage fetch reads OpenCode auth path", async () => {
