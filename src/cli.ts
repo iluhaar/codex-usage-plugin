@@ -17,6 +17,7 @@ const helpText = () =>
     "",
     "Options:",
     "  -h, --help                  Show this help message",
+    "  --version                  Show the installed package version",
     "  --install                   Add plugins to global OpenCode/TUI configs",
     "  --uninstall                 Remove plugins from global OpenCode/TUI configs",
     "  --upgrade [version]         Upgrade the installed package version (defaults to latest)",
@@ -81,6 +82,7 @@ async function withScanner<T>(message: string, operation: () => Promise<T>) {
 function parseCliOptions(argv: string[]): CliOptions {
   const options: CliOptions = {
     help: false,
+    version: false,
     install: false,
     uninstall: false,
     upgrade: false,
@@ -90,6 +92,10 @@ function parseCliOptions(argv: string[]): CliOptions {
     const arg = argv[index];
     if (arg === "-h" || arg === "--help") {
       options.help = true;
+      continue;
+    }
+    if (arg === "--version") {
+      options.version = true;
       continue;
     }
     if (arg === "--install") {
@@ -141,14 +147,19 @@ function parseCliOptions(argv: string[]): CliOptions {
   return options;
 }
 
-async function upgradeInstalledPackage(version?: string) {
-  const target = version ? `${packageName}@${version}` : `${packageName}@latest`;
+async function installedPackageVersion() {
   const packageJson = JSON.parse(
     await readFile(join(repoRootFromDist(), "package.json"), "utf8"),
   ) as { version?: unknown };
   if (typeof packageJson.version !== "string") {
     throw new Error(`Could not determine the installed ${packageName} version`);
   }
+  return packageJson.version;
+}
+
+async function upgradeInstalledPackage(version?: string) {
+  const target = version ? `${packageName}@${version}` : `${packageName}@latest`;
+  const currentVersion = await installedPackageVersion();
 
   const { stdout } = await execFileAsync(
     "npm",
@@ -164,7 +175,7 @@ async function upgradeInstalledPackage(version?: string) {
     throw new Error(`Could not resolve the target ${packageName} version`);
   }
 
-  if (packageJson.version === targetVersion) {
+  if (currentVersion === targetVersion) {
     process.stdout.write(`${packageName} is already up to date (${targetVersion})\n`);
     return;
   }
@@ -443,6 +454,11 @@ function tuiConfigTargets(options: CliOptions): ConfigTarget[] {
 
 export async function runCli(argv = process.argv.slice(2)) {
   const options = parseCliOptions(argv);
+  if (options.version) {
+    process.stdout.write(`${await installedPackageVersion()}\n`);
+    return;
+  }
+
   if (options.help || (!options.install && !options.uninstall && !options.upgrade)) {
     process.stdout.write(`${helpText()}\n`);
     return;

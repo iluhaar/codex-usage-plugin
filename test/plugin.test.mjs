@@ -14,6 +14,11 @@ const distCoreUrl = pathToFileURL(join(repoRoot, "dist", "codex-usage-core.js"))
 const distPluginUrl = pathToFileURL(join(repoRoot, "dist", "index.js")).href;
 const distTuiPluginUrl = pathToFileURL(join(repoRoot, "dist", "tui.js")).href;
 
+async function currentPackageVersion() {
+  const packageJson = JSON.parse(await readFile(join(repoRoot, "package.json"), "utf8"));
+  return packageJson.version;
+}
+
 async function runCli(args, env = {}) {
   return execFileAsync(process.execPath, [cliPath, ...args], {
     cwd: repoRoot,
@@ -122,6 +127,13 @@ await test("repeated install leaves an existing config unchanged", async () => {
   assert.match(result.stdout, /No changes needed:/);
 });
 
+await test("version prints the current package version", async () => {
+  const version = await currentPackageVersion();
+  const result = await runCli(["--version"]);
+
+  assert.equal(result.stdout, `${version}\n`);
+});
+
 await test("upgrade installs the latest package version outside its package directory", async () => {
   await withFakeNpm(async ({ argsFile, cwdFile, env }) => {
     const result = await runCli(["--upgrade"], env);
@@ -132,7 +144,7 @@ await test("upgrade installs the latest package version outside its package dire
     assert.notEqual(cwd.trim().replaceAll("\\", "/"), repoRoot.replace(/\/$/, ""));
     assert.match(result.stdout, /Installing @illiadotdev\/codex-usage-plugin@latest\.\.\./);
     assert.match(result.stdout, /Upgraded @illiadotdev\/codex-usage-plugin to latest/);
-  });
+  }, "999.0.0");
 });
 
 await test("upgrade installs the requested package version", async () => {
@@ -147,25 +159,27 @@ await test("upgrade installs the requested package version", async () => {
 });
 
 await test("upgrade skips install when latest is already installed", async () => {
+  const version = await currentPackageVersion();
   await withFakeNpm(async ({ argsFile, env }) => {
     const result = await runCli(["--upgrade"], env);
     const args = await readFile(argsFile, "utf8");
 
     assert.match(args, /view @illiadotdev\/codex-usage-plugin@latest version --json/);
     assert.doesNotMatch(args, /install -g/);
-    assert.match(result.stdout, /already up to date \(0\.2\.14\)/);
-  }, "0.2.14");
+    assert.match(result.stdout, new RegExp(`already up to date \\(${version.replaceAll(".", "\\.")}\\)`));
+  }, version);
 });
 
 await test("upgrade skips install when requested version is already installed", async () => {
+  const version = await currentPackageVersion();
   await withFakeNpm(async ({ argsFile, env }) => {
-    const result = await runCli(["--upgrade", "0.2.14"], env);
+    const result = await runCli(["--upgrade", version], env);
     const args = await readFile(argsFile, "utf8");
 
-    assert.match(args, /view @illiadotdev\/codex-usage-plugin@0\.2\.14 version --json/);
+    assert.match(args, new RegExp(`view @illiadotdev/codex-usage-plugin@${version.replaceAll(".", "\\.")} version --json`));
     assert.doesNotMatch(args, /install -g/);
-    assert.match(result.stdout, /already up to date \(0\.2\.14\)/);
-  }, "0.2.14");
+    assert.match(result.stdout, new RegExp(`already up to date \\(${version.replaceAll(".", "\\.")}\\)`));
+  }, version);
 });
 
 await test("upgrade cannot be combined with install", async () => {
