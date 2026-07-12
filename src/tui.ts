@@ -1,22 +1,10 @@
 import type { TuiPluginModule } from "@opencode-ai/plugin/tui";
 
 import { getCodexUsage } from "./codex-usage-core.js";
+import { scannerFrames, scannerIntervalMs } from "./scanner-animation.js";
 
 const commandName = "codex-usage.show";
 const shortcut = "<leader>i";
-const width = 8;
-const intervalMs = 80;
-const activeBlock = "🟦";
-const inactiveBlock = "🔹";
-
-const scannerFrames = [
-  ...Array.from({ length: width }, (_, head) => head),
-  ...Array.from({ length: 9 }, () => width - 1),
-  ...Array.from({ length: width - 1 }, (_, index) => width - index - 2),
-  ...Array.from({ length: 30 }, () => 0),
-].map((head) =>
-  Array.from({ length: width }, (_, index) => (index === head ? activeBlock : inactiveBlock)).join(""),
-);
 
 export default {
   id: "codex-usage-tui",
@@ -48,7 +36,7 @@ export default {
       };
 
       showLoading();
-      if (animated) animation = setInterval(showLoading, intervalMs);
+      if (animated) animation = setInterval(showLoading, scannerIntervalMs);
 
       try {
         const result = await getCodexUsage();
