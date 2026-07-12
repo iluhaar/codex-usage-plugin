@@ -1,5 +1,6 @@
 type CliOptions = {
   help: boolean;
+  version: boolean;
   install: boolean;
   uninstall: boolean;
   upgrade: boolean;
