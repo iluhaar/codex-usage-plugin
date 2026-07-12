@@ -57,6 +57,27 @@ function defaultTuiConfigPath() {
   return join(homedir(), ".config", "opencode", "tui.json");
 }
 
+async function withScanner<T>(message: string, operation: () => Promise<T>) {
+  if (!process.stdout.isTTY) {
+    process.stdout.write(`${message}...\n`);
+    return operation();
+  }
+
+  let frame = 0;
+  process.stdout.write(`${scannerFrames[frame]} ${message}`);
+  const animation = setInterval(() => {
+    frame = (frame + 1) % scannerFrames.length;
+    process.stdout.write(`\r${scannerFrames[frame]} ${message}`);
+  }, scannerIntervalMs);
+
+  try {
+    return await operation();
+  } finally {
+    clearInterval(animation);
+    process.stdout.write("\r\x1b[2K");
+  }
+}
+
 function parseCliOptions(argv: string[]): CliOptions {
   const options: CliOptions = {
     help: false,
@@ -122,32 +143,14 @@ function parseCliOptions(argv: string[]): CliOptions {
 
 async function upgradeInstalledPackage(version?: string) {
   const target = version ? `${packageName}@${version}` : `${packageName}@latest`;
-  const message = `Installing ${target}`;
-  let frame = 0;
-  let spinner: NodeJS.Timeout | undefined;
 
-  if (process.stdout.isTTY) {
-    process.stdout.write(`${scannerFrames[frame]} ${message}`);
-    spinner = setInterval(() => {
-      frame = (frame + 1) % scannerFrames.length;
-      process.stdout.write(`\r${scannerFrames[frame]} ${message}`);
-    }, scannerIntervalMs);
-  } else {
-    process.stdout.write(`${message}...\n`);
-  }
-
-  try {
+  await withScanner(`Installing ${target}`, async () => {
     await execFileAsync("npm", ["install", "-g", target], {
       // npm cannot replace the installed package on Windows while cwd is inside it.
       cwd: homedir(),
       shell: true,
     });
-  } finally {
-    if (spinner) {
-      clearInterval(spinner);
-      process.stdout.write("\r\x1b[2K");
-    }
-  }
+  });
 
   process.stdout.write(`Upgraded ${packageName} to ${version ?? "latest"}\n`);
 }
@@ -342,29 +345,24 @@ async function writeConfig(
   const current = await readConfig(target.path);
   if (current === undefined) {
     if (action === "uninstall") {
-      process.stdout.write(`No changes needed: ${target.path}\n`);
-      return;
+      return `No changes needed: ${target.path}`;
     }
 
     const next = freshConfig(target, action);
     await mkdir(dirname(target.path), { recursive: true });
     await writeFile(target.path, next, "utf8");
-    process.stdout.write(`Updated: ${target.path}\n`);
-    return;
+    return `Updated: ${target.path}`;
   }
 
   const next = updateConfigContent(current, target, action);
 
   if (next === current) {
-    process.stdout.write(`No changes needed: ${target.path}\n`);
-    return;
+    return `No changes needed: ${target.path}`;
   }
 
   await mkdir(dirname(target.path), { recursive: true });
   await writeFile(target.path, next, "utf8");
-  process.stdout.write(
-    `${action === "install" ? "Updated" : "Removed from"}: ${target.path}\n`,
-  );
+  return `${action === "install" ? "Updated" : "Removed from"}: ${target.path}`;
 }
 
 async function cleanupConfigIfExists(target: ConfigTarget) {
@@ -431,10 +429,15 @@ export async function runCli(argv = process.argv.slice(2)) {
   }
 
   const action = options.install ? "install" : "uninstall";
-  await Promise.all([
-    ...serverConfigTargets(options).map((target) => writeConfig(target, action)),
-    ...tuiConfigTargets(options).map((target) => writeConfig(target, action)),
-  ]);
+  const messages = await withScanner(
+    `${options.install ? "Installing" : "Uninstalling"} ${packageName}`,
+    () =>
+      Promise.all([
+        ...serverConfigTargets(options).map((target) => writeConfig(target, action)),
+        ...tuiConfigTargets(options).map((target) => writeConfig(target, action)),
+      ]),
+  );
+  process.stdout.write(`${messages.join("\n")}\n`);
 }
 
 export async function runCliSafely(argv = process.argv.slice(2)) {
