@@ -95,6 +95,30 @@ await test("install replaces the old server plugin path", async () => {
   assert.doesNotMatch(content, /dist\/index\.js/);
 });
 
+await test("repeated install leaves an existing config unchanged", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "codex-usage-plugin-"));
+  const configPath = join(dir, "opencode.json");
+  const tuiConfigPath = join(dir, "tui.json");
+  const initial = `{
+  "plugin": [
+    "@plannotator/opencode@latest",
+    "@illiadotdev/codex-usage-plugin@latest"
+  ]
+}\n`;
+  await writeFile(configPath, initial, "utf8");
+
+  const result = await runCli([
+    "--install",
+    "--config",
+    configPath,
+    "--tui-config",
+    tuiConfigPath,
+  ]);
+
+  assert.equal(await readFile(configPath, "utf8"), initial);
+  assert.match(result.stdout, /No changes needed:/);
+});
+
 await test("upgrade installs the latest package version outside its package directory", async () => {
   await withFakeNpm(async ({ argsFile, cwdFile, env }) => {
     const result = await runCli(["--upgrade"], env);
