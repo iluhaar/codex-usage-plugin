@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 const packageName = "@illiadotdev/codex-usage-plugin";
+const pluginPackage = `${packageName}@latest`;
 
 const helpText = () =>
   [
@@ -14,8 +15,8 @@ const helpText = () =>
     "",
     "Options:",
     "  -h, --help                  Show this help message",
-    "  --install                   Add built plugin paths to global OpenCode/TUI configs",
-    "  --uninstall                 Remove plugin paths from global OpenCode/TUI configs",
+    "  --install                   Add plugins to global OpenCode/TUI configs",
+    "  --uninstall                 Remove plugins from global OpenCode/TUI configs",
     "  --upgrade [version]         Upgrade the installed package version (defaults to latest)",
     "  --config <path>             Server OpenCode config path",
     "  --tui-config <path>         TUI config path",
@@ -352,9 +353,10 @@ function serverConfigTargets(options: CliOptions): ConfigTarget[] {
   return [
     {
       path: options.opencodeConfigPath ?? defaultOpencodeConfigPath(),
-      pluginPath: pluginPath("index"),
+      pluginPath: pluginPackage,
       schema: "https://opencode.ai/config.json",
       stalePluginPaths: [
+        pluginPath("index"),
         `${root}/dist/server.js`,
         `${root}/src/index.ts`,
         `${root}/src/server.ts`,

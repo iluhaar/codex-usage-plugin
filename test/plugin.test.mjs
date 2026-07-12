@@ -50,7 +50,7 @@ await test("uninstall does not create a missing config", async () => {
   await assert.rejects(access(configPath), /ENOENT/);
 });
 
-await test("install writes the plugin path", async () => {
+await test("install writes the package name and TUI plugin path", async () => {
   const dir = await mkdtemp(join(tmpdir(), "codex-usage-plugin-"));
   const configPath = join(dir, "opencode.jsonc");
   const tuiConfigPath = join(dir, "tui.json");
@@ -67,9 +67,30 @@ await test("install writes the plugin path", async () => {
 
   assert.match(result.stdout, /Updated:/);
   assert.match(content, /"plugin"\s*:\s*\[/);
-  assert.match(content, /dist\/index\.js/);
+  assert.match(content, /@illiadotdev\/codex-usage-plugin@latest/);
+  assert.doesNotMatch(content, /dist\/index\.js/);
   assert.match(tuiContent, /"plugin"\s*:\s*\[/);
   assert.match(tuiContent, /dist\/tui\.js/);
+});
+
+await test("install replaces the old server plugin path", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "codex-usage-plugin-"));
+  const configPath = join(dir, "opencode.jsonc");
+  const tuiConfigPath = join(dir, "tui.json");
+  const oldPath = join(repoRoot, "dist", "index.js").replaceAll("\\", "/");
+  await writeFile(configPath, JSON.stringify({ plugin: [oldPath] }), "utf8");
+
+  await runCli([
+    "--install",
+    "--config",
+    configPath,
+    "--tui-config",
+    tuiConfigPath,
+  ]);
+  const content = await readFile(configPath, "utf8");
+
+  assert.match(content, /@illiadotdev\/codex-usage-plugin@latest/);
+  assert.doesNotMatch(content, /dist\/index\.js/);
 });
 
 await test("upgrade installs the latest package version", async () => {
