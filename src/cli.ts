@@ -257,6 +257,7 @@ function updateConfigContent(
   action: "install" | "uninstall",
 ) {
   const pluginLiteral = JSON.stringify(target.pluginPath);
+  const normalizedPluginPath = normalizePath(target.pluginPath);
   const stale = new Set(target.stalePluginPaths.map(normalizePath));
   const items = pluginArrayItems(content);
 
@@ -267,9 +268,18 @@ function updateConfigContent(
     );
   }
 
+  const parsedItems = items.map(parseStringLiteral);
+  if (
+    action === "install" &&
+    parsedItems.includes(normalizedPluginPath) &&
+    !parsedItems.some((parsed) => parsed !== undefined && stale.has(parsed))
+  ) {
+    return content;
+  }
+
   const nextItems = items.filter((item) => {
     const parsed = parseStringLiteral(item);
-    return parsed !== target.pluginPath && (parsed ? !stale.has(parsed) : true);
+    return parsed !== normalizedPluginPath && (parsed ? !stale.has(parsed) : true);
   });
 
   if (action === "install") nextItems.push(pluginLiteral);
