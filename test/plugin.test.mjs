@@ -24,20 +24,22 @@ async function runCli(args, env = {}) {
 async function withFakeNpm(testFn) {
   const dir = await mkdtemp(join(tmpdir(), "codex-usage-plugin-npm-"));
   const argsFile = join(dir, "upgrade-args.txt");
+  const cwdFile = join(dir, "upgrade-cwd.txt");
   const npmCmdPath = join(dir, "npm.cmd");
 
   await writeFile(
     npmCmdPath,
-    "@echo off\r\n> \"%UPGRADE_ARGS_FILE%\" echo %*\r\nexit /b 0\r\n",
+    "@echo off\r\n> \"%UPGRADE_ARGS_FILE%\" echo %*\r\n> \"%UPGRADE_CWD_FILE%\" cd\r\nexit /b 0\r\n",
     "utf8",
   );
 
   const env = {
     PATH: `${dir};${process.env.PATH ?? ""}`,
     UPGRADE_ARGS_FILE: argsFile,
+    UPGRADE_CWD_FILE: cwdFile,
   };
 
-  await testFn({ argsFile, env });
+  await testFn({ argsFile, cwdFile, env });
 }
 
 await test("uninstall does not create a missing config", async () => {
@@ -93,12 +95,14 @@ await test("install replaces the old server plugin path", async () => {
   assert.doesNotMatch(content, /dist\/index\.js/);
 });
 
-await test("upgrade installs the latest package version", async () => {
-  await withFakeNpm(async ({ argsFile, env }) => {
+await test("upgrade installs the latest package version outside its package directory", async () => {
+  await withFakeNpm(async ({ argsFile, cwdFile, env }) => {
     const result = await runCli(["--upgrade"], env);
     const args = await readFile(argsFile, "utf8");
+    const cwd = await readFile(cwdFile, "utf8");
 
     assert.match(args, /install -g @illiadotdev\/codex-usage-plugin@latest/);
+    assert.notEqual(cwd.trim().replaceAll("\\", "/"), repoRoot.replace(/\/$/, ""));
     assert.match(result.stdout, /Upgraded @illiadotdev\/codex-usage-plugin to latest/);
   });
 });
