@@ -48,6 +48,7 @@ await test("uninstall does not create a missing config", async () => {
 
   const result = await runCli(["--uninstall", "--config", configPath]);
 
+  assert.match(result.stdout, /Uninstalling @illiadotdev\/codex-usage-plugin\.\.\./);
   assert.match(result.stdout, /No changes needed:/);
   await assert.rejects(access(configPath), /ENOENT/);
 });
@@ -67,6 +68,7 @@ await test("install writes the package name and TUI plugin path", async () => {
   const content = await readFile(configPath, "utf8");
   const tuiContent = await readFile(tuiConfigPath, "utf8");
 
+  assert.match(result.stdout, /Installing @illiadotdev\/codex-usage-plugin\.\.\./);
   assert.match(result.stdout, /Updated:/);
   assert.match(content, /"plugin"\s*:\s*\[/);
   assert.match(content, /@illiadotdev\/codex-usage-plugin@latest/);
