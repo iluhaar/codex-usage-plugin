@@ -5,6 +5,8 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
+import { scannerFrames, scannerIntervalMs } from "./scanner-animation.js";
+
 const execFileAsync = promisify(execFile);
 const packageName = "@illiadotdev/codex-usage-plugin";
 const pluginPackage = `${packageName}@latest`;
@@ -120,12 +122,32 @@ function parseCliOptions(argv: string[]): CliOptions {
 
 async function upgradeInstalledPackage(version?: string) {
   const target = version ? `${packageName}@${version}` : `${packageName}@latest`;
+  const message = `Installing ${target}`;
+  let frame = 0;
+  let spinner: NodeJS.Timeout | undefined;
 
-  await execFileAsync("npm", ["install", "-g", target], {
-    // npm cannot replace the installed package on Windows while cwd is inside it.
-    cwd: homedir(),
-    shell: true,
-  });
+  if (process.stdout.isTTY) {
+    process.stdout.write(`${scannerFrames[frame]} ${message}`);
+    spinner = setInterval(() => {
+      frame = (frame + 1) % scannerFrames.length;
+      process.stdout.write(`\r${scannerFrames[frame]} ${message}`);
+    }, scannerIntervalMs);
+  } else {
+    process.stdout.write(`${message}...\n`);
+  }
+
+  try {
+    await execFileAsync("npm", ["install", "-g", target], {
+      // npm cannot replace the installed package on Windows while cwd is inside it.
+      cwd: homedir(),
+      shell: true,
+    });
+  } finally {
+    if (spinner) {
+      clearInterval(spinner);
+      process.stdout.write("\r\x1b[2K");
+    }
+  }
 
   process.stdout.write(`Upgraded ${packageName} to ${version ?? "latest"}\n`);
 }

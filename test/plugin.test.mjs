@@ -127,6 +127,7 @@ await test("upgrade installs the latest package version outside its package dire
 
     assert.match(args, /install -g @illiadotdev\/codex-usage-plugin@latest/);
     assert.notEqual(cwd.trim().replaceAll("\\", "/"), repoRoot.replace(/\/$/, ""));
+    assert.match(result.stdout, /Installing @illiadotdev\/codex-usage-plugin@latest\.\.\./);
     assert.match(result.stdout, /Upgraded @illiadotdev\/codex-usage-plugin to latest/);
   });
 });
@@ -137,6 +138,7 @@ await test("upgrade installs the requested package version", async () => {
     const args = await readFile(argsFile, "utf8");
 
     assert.match(args, /install -g @illiadotdev\/codex-usage-plugin@0\.2\.9/);
+    assert.match(result.stdout, /Installing @illiadotdev\/codex-usage-plugin@0\.2\.9\.\.\./);
     assert.match(result.stdout, /Upgraded @illiadotdev\/codex-usage-plugin to 0\.2\.9/);
   });
 });
