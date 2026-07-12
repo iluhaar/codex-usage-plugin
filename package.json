@@ -1,6 +1,6 @@
 {
   "name": "@illiadotdev/codex-usage-plugin",
-  "version": "0.2.15",
+  "version": "0.2.16",
   "license": "MIT",
   "description": "OpenCode plugin for viewing Codex ChatGPT usage limits and credits.",
   "private": false,
