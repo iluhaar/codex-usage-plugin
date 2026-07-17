@@ -8,6 +8,22 @@ const USAGE_URL = `${CHATGPT_BACKEND_URL}/wham/usage`;
 const PROFILE_URL = `${CHATGPT_BACKEND_URL}/wham/profiles/me`;
 const CHATGPT_USAGE_URL = "https://chatgpt.com/codex/settings/usage";
 
+export type QuotaWindowPeriod = "daily" | "weekly" | "monthly" | "other";
+
+export type NormalizedQuotaWindow = {
+  name: string;
+  period: QuotaWindowPeriod;
+  remainingPercent?: number;
+  resetAt?: number;
+};
+
+export type CodexUsageSnapshot = {
+  usage: UsagePayload;
+  profile?: TokenUsageProfile;
+  windows: NormalizedQuotaWindow[];
+  fetchedAt: number;
+};
+
 function codexHome() {
   const fromEnv = process.env.CODEX_HOME?.trim();
   if (fromEnv) return resolve(fromEnv);
@@ -101,6 +117,8 @@ async function readAuth() {
 
   for (const authPath of authPaths) {
     try {
+      // Auth locations are ordered by precedence and must be checked sequentially.
+      // oxlint-disable-next-line no-await-in-loop
       const auth = await readAuthFile(authPath);
       if (auth) return auth;
     } catch (error) {
@@ -273,6 +291,88 @@ function renderToastMessage(usage: UsagePayload) {
     : "No displayable limit data returned for this account.";
 }
 
+function quotaPeriod(name: string | undefined, seconds: number | undefined) {
+  if (name && /\bdaily\b/i.test(name)) return "daily" as const;
+  if (name && /\bweekly\b/i.test(name)) return "weekly" as const;
+  if (name && /\bmonthly\b/i.test(name)) return "monthly" as const;
+  if (seconds === 60 * 60 * 24) return "daily" as const;
+  if (seconds === 60 * 60 * 24 * 7) return "weekly" as const;
+  if (
+    typeof seconds === "number" &&
+    seconds >= 60 * 60 * 24 * 28 &&
+    seconds <= 60 * 60 * 24 * 31
+  ) {
+    return "monthly" as const;
+  }
+  return "other" as const;
+}
+
+function normalizeWindow(
+  prefix: string | undefined,
+  window: RateLimitWindow | null | undefined,
+  secondary: boolean,
+): NormalizedQuotaWindow | undefined {
+  if (!window) return undefined;
+
+  const label = limitLabel(window.limit_window_seconds, secondary);
+  const name = prefix ? `${prefix} ${label}` : label;
+  const used = window.used_percent;
+  const remainingPercent =
+    typeof used === "number" && Number.isFinite(used)
+      ? 100 - clamp(used, 0, 100)
+      : undefined;
+  const resetAt =
+    typeof window.reset_at === "number" && Number.isFinite(window.reset_at)
+      ? window.reset_at
+      : undefined;
+
+  return {
+    name,
+    period: quotaPeriod(prefix ?? label, window.limit_window_seconds),
+    remainingPercent,
+    resetAt,
+  };
+}
+
+export function normalizeQuotaWindows(usage: UsagePayload) {
+  const windows: NormalizedQuotaWindow[] = [];
+  const addDetails = (prefix: string | undefined, details?: RateLimitDetails | null) => {
+    const primary = normalizeWindow(prefix, details?.primary_window, false);
+    const secondary = normalizeWindow(prefix, details?.secondary_window, true);
+    if (primary) windows.push(primary);
+    if (secondary) windows.push(secondary);
+  };
+
+  addDetails(undefined, usage.rate_limit);
+  for (const additional of usage.additional_rate_limits ?? []) {
+    addDetails(
+      additional.limit_name ?? additional.metered_feature ?? "Additional",
+      additional.rate_limit,
+    );
+  }
+  return windows;
+}
+
+export function selectGuardWindow(windows: NormalizedQuotaWindow[]) {
+  const known = windows.filter(
+    (window) =>
+      (window.period === "daily" ||
+        window.period === "weekly" ||
+        window.period === "monthly") &&
+      window.remainingPercent !== undefined,
+  );
+  const candidates = ["daily", "weekly", "monthly"]
+    .map((period) => known.filter((window) => window.period === period))
+    .find((periodWindows) => periodWindows.length) ?? [];
+  return candidates.reduce<NormalizedQuotaWindow | undefined>(
+    (lowest, window) =>
+      !lowest || window.remainingPercent! < lowest.remainingPercent!
+        ? window
+        : lowest,
+    undefined,
+  );
+}
+
 function renderLimitRows(usage: UsagePayload) {
   const rows: string[] = [];
   rows.push(...renderWindowRows(undefined, usage.rate_limit ?? undefined));
@@ -435,7 +535,10 @@ function formatCreditUsage(
   return `${Math.round(usedNumber).toLocaleString()} of ${Math.round(limitNumber).toLocaleString()} credits used`;
 }
 
-export async function getCodexUsage(options?: { requestTimeoutMs?: number }) {
+async function fetchCodexUsageData(options?: {
+  requestTimeoutMs?: number;
+  includeProfile?: boolean;
+}) {
   const auth = await readAuth();
   const idToken = decodeIdToken(auth);
   const requestTimeoutMs = options?.requestTimeoutMs ?? 10_000;
@@ -446,18 +549,38 @@ export async function getCodexUsage(options?: { requestTimeoutMs?: number }) {
     requestTimeoutMs,
   );
   let profile: TokenUsageProfile | undefined;
-  try {
-    profile = await fetchJson<TokenUsageProfile>(
-      PROFILE_URL,
-      auth,
-      idToken,
-      requestTimeoutMs,
-    );
-  } catch {
-    profile = undefined;
+  if (options?.includeProfile !== false) {
+    try {
+      profile = await fetchJson<TokenUsageProfile>(
+        PROFILE_URL,
+        auth,
+        idToken,
+        requestTimeoutMs,
+      );
+    } catch {
+      profile = undefined;
+    }
   }
+  const snapshot = {
+    usage,
+    profile,
+    windows: normalizeQuotaWindows(usage),
+    fetchedAt: Date.now(),
+  } satisfies CodexUsageSnapshot;
+  return { auth, idToken, snapshot };
+}
+
+export async function fetchCodexUsageSnapshot(options?: {
+  requestTimeoutMs?: number;
+  includeProfile?: boolean;
+}) {
+  return (await fetchCodexUsageData(options)).snapshot;
+}
+
+export async function getCodexUsage(options?: { requestTimeoutMs?: number }) {
+  const { auth, idToken, snapshot } = await fetchCodexUsageData(options);
   return {
-    markdown: renderUsage(auth, idToken, usage, profile),
-    toast: renderToastMessage(usage),
+    markdown: renderUsage(auth, idToken, snapshot.usage, snapshot.profile),
+    toast: renderToastMessage(snapshot.usage),
   };
 }
