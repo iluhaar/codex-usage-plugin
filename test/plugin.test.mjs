@@ -526,7 +526,7 @@ await test("usage fetch times out", async () => {
   }
 });
 
-await test("guard window selection prefers daily and falls back to monthly", async () => {
+await test("guard window selection checks daily, weekly, then monthly", async () => {
   const { normalizeQuotaWindows, selectGuardWindow } = await import(distCoreUrl);
   const windows = normalizeQuotaWindows({
     rate_limit: {
@@ -550,6 +550,15 @@ await test("guard window selection prefers daily and falls back to monthly", asy
         limit_name: "Unknown daily payload",
         rate_limit: { primary_window: { limit_window_seconds: 24 * 60 * 60 } },
       },
+      {
+        limit_name: "Weekly Codex",
+        rate_limit: {
+          primary_window: {
+            used_percent: 80,
+            limit_window_seconds: 7 * 24 * 60 * 60,
+          },
+        },
+      },
     ],
   });
 
@@ -558,7 +567,14 @@ await test("guard window selection prefers daily and falls back to monthly", asy
   assert.equal(selected.remainingPercent, 15);
   assert.equal(selected.resetAt, 123);
 
-  const monthly = selectGuardWindow(windows.filter((window) => window.period !== "daily"));
+  const withoutDaily = windows.filter((window) => window.period !== "daily");
+  const weekly = selectGuardWindow(withoutDaily);
+  assert.equal(weekly.period, "weekly");
+  assert.equal(weekly.remainingPercent, 20);
+
+  const monthly = selectGuardWindow(
+    withoutDaily.filter((window) => window.period !== "weekly"),
+  );
   assert.equal(monthly.period, "monthly");
   assert.equal(monthly.remainingPercent, 30);
 });

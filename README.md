@@ -64,7 +64,7 @@ When remaining quota reaches the critical percentage, the guard:
 - records the goal, progress, changed files, verification, remaining work, and next action
 - disables automatic continuation after that summary
 
-The guard prefers a valid daily limit. If no daily limit is available, it uses a valid monthly limit. Other windows and missing percentages do not block work. Usage API and auth failures are fail-open.
+The guard checks the first available valid limit in this order: daily, weekly, then monthly. Other windows and missing percentages do not block work. Usage API and auth failures are fail-open.
 
 Example configuration:
 

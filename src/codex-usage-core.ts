@@ -8,7 +8,7 @@ const USAGE_URL = `${CHATGPT_BACKEND_URL}/wham/usage`;
 const PROFILE_URL = `${CHATGPT_BACKEND_URL}/wham/profiles/me`;
 const CHATGPT_USAGE_URL = "https://chatgpt.com/codex/settings/usage";
 
-export type QuotaWindowPeriod = "daily" | "monthly" | "other";
+export type QuotaWindowPeriod = "daily" | "weekly" | "monthly" | "other";
 
 export type NormalizedQuotaWindow = {
   name: string;
@@ -293,8 +293,10 @@ function renderToastMessage(usage: UsagePayload) {
 
 function quotaPeriod(name: string | undefined, seconds: number | undefined) {
   if (name && /\bdaily\b/i.test(name)) return "daily" as const;
+  if (name && /\bweekly\b/i.test(name)) return "weekly" as const;
   if (name && /\bmonthly\b/i.test(name)) return "monthly" as const;
   if (seconds === 60 * 60 * 24) return "daily" as const;
+  if (seconds === 60 * 60 * 24 * 7) return "weekly" as const;
   if (
     typeof seconds === "number" &&
     seconds >= 60 * 60 * 24 * 28 &&
@@ -354,13 +356,14 @@ export function normalizeQuotaWindows(usage: UsagePayload) {
 export function selectGuardWindow(windows: NormalizedQuotaWindow[]) {
   const known = windows.filter(
     (window) =>
-      (window.period === "daily" || window.period === "monthly") &&
+      (window.period === "daily" ||
+        window.period === "weekly" ||
+        window.period === "monthly") &&
       window.remainingPercent !== undefined,
   );
-  const daily = known.filter((window) => window.period === "daily");
-  const candidates = daily.length
-    ? daily
-    : known.filter((window) => window.period === "monthly");
+  const candidates = ["daily", "weekly", "monthly"]
+    .map((period) => known.filter((window) => window.period === period))
+    .find((periodWindows) => periodWindows.length) ?? [];
   return candidates.reduce<NormalizedQuotaWindow | undefined>(
     (lowest, window) =>
       !lowest || window.remainingPercent! < lowest.remainingPercent!
