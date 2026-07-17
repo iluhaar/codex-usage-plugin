@@ -2,8 +2,12 @@ type CliOptions = {
   help: boolean;
   version: boolean;
   install: boolean;
+  installLocal: boolean;
   uninstall: boolean;
   upgrade: boolean;
+  guardEnabled?: boolean;
+  criticalRemainingPercent?: number;
+  checkIntervalMinutes?: number;
   upgradeVersion?: string;
   opencodeConfigPath?: string;
   tuiConfigPath?: string;
@@ -14,6 +18,9 @@ type ConfigTarget = {
   pluginPath: string;
   schema: string;
   stalePluginPaths: string[];
+  stalePackageNames?: string[];
+  packageName?: string;
+  pluginLiteral?: string;
 };
 
 type CodexAuthFile = {
