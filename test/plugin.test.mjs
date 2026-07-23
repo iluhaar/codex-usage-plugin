@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { access, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import test from "node:test";
@@ -30,16 +30,20 @@ async function withFakeNpm(testFn, targetVersion = "0.2.15") {
   const dir = await mkdtemp(join(tmpdir(), "codex-usage-plugin-npm-"));
   const argsFile = join(dir, "upgrade-args.txt");
   const cwdFile = join(dir, "upgrade-cwd.txt");
-  const npmCmdPath = join(dir, "npm.cmd");
+  const windows = process.platform === "win32";
+  const npmCmdPath = join(dir, windows ? "npm.cmd" : "npm");
 
   await writeFile(
     npmCmdPath,
-    "@echo off\r\n>> \"%UPGRADE_ARGS_FILE%\" echo %*\r\n> \"%UPGRADE_CWD_FILE%\" cd\r\nif \"%1\"==\"view\" echo \"%UPGRADE_TARGET_VERSION%\"\r\nexit /b 0\r\n",
+    windows
+      ? "@echo off\r\n>> \"%UPGRADE_ARGS_FILE%\" echo %*\r\n> \"%UPGRADE_CWD_FILE%\" cd\r\nif \"%1\"==\"view\" echo \"%UPGRADE_TARGET_VERSION%\"\r\nexit /b 0\r\n"
+      : "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$UPGRADE_ARGS_FILE\"\npwd > \"$UPGRADE_CWD_FILE\"\nif [ \"$1\" = \"view\" ]; then printf '\"%s\"\\n' \"$UPGRADE_TARGET_VERSION\"; fi\n",
     "utf8",
   );
+  if (!windows) await chmod(npmCmdPath, 0o755);
 
   const env = {
-    PATH: `${dir};${process.env.PATH ?? ""}`,
+    PATH: `${dir}${delimiter}${process.env.PATH ?? ""}`,
     UPGRADE_ARGS_FILE: argsFile,
     UPGRADE_CWD_FILE: cwdFile,
     UPGRADE_TARGET_VERSION: targetVersion,
