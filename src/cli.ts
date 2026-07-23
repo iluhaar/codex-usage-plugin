@@ -4,8 +4,15 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { createInterface } from "node:readline/promises";
 
 import { scannerIntervalMs, terminalScannerFrames } from "./scanner-animation.js";
+import {
+  defaultSettingsPath,
+  readSettings,
+  type UsageDialogDesign,
+  writeSettings,
+} from "./settings.js";
 
 const execFileAsync = promisify(execFile);
 const packageName = "@illiadotdev/codex-usage-plugin";
@@ -21,6 +28,7 @@ const helpText = () =>
     "  --install                   Add plugins to global OpenCode/TUI configs",
     "  --uninstall                 Remove plugins from global OpenCode/TUI configs",
     "  --upgrade [version]         Upgrade the installed package version (defaults to latest)",
+    "  --settings[=v1|v2]          Choose the usage dialog design",
     "  --config <path>             Server OpenCode config path",
     "  --tui-config <path>         TUI config path",
     "",
@@ -29,6 +37,7 @@ const helpText = () =>
     "  codex-usage-plugin --uninstall",
     "  codex-usage-plugin --upgrade",
     "  codex-usage-plugin --upgrade 0.2.9",
+    "  codex-usage-plugin --settings",
   ].join("\n");
 
 function moduleDistDir() {
@@ -56,6 +65,54 @@ function defaultOpencodeConfigPath() {
 
 function defaultTuiConfigPath() {
   return join(homedir(), ".config", "opencode", "tui.json");
+}
+
+function settingsPath(options: CliOptions) {
+  if (!options.tuiConfigPath) return defaultSettingsPath();
+  return join(
+    dirname(options.tuiConfigPath),
+    "codex-usage-plugin.json",
+  );
+}
+
+function parseDesign(value: string): UsageDialogDesign {
+  if (value === "v1" || value === "v2") return value;
+  throw new Error(`unknown dialog design: ${value} (expected v1 or v2)`);
+}
+
+async function selectDesign(current: UsageDialogDesign) {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    throw new Error("--settings requires a terminal; use --settings=v1 or --settings=v2");
+  }
+  const prompt = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    const answer = (
+      await prompt.question(
+        `Usage dialog design (1: compact v1, 2: status panel v2) [${current === "v1" ? "1" : "2"}]: `,
+      )
+    ).trim();
+    if (!answer) return current;
+    if (answer === "1" || answer === "v1") return "v1";
+    if (answer === "2" || answer === "v2") return "v2";
+    throw new Error("invalid selection (expected 1 or 2)");
+  } finally {
+    prompt.close();
+  }
+}
+
+async function configureDesign(options: CliOptions, initialize = false) {
+  const path = settingsPath(options);
+  const current = await readSettings(path);
+  let design = options.settingsDesign;
+  if (!design && process.stdin.isTTY && process.stdout.isTTY) {
+    design = await selectDesign(current.usageDialogDesign);
+  }
+  if (!design && !initialize) {
+    throw new Error("--settings requires a terminal; use --settings=v1 or --settings=v2");
+  }
+  design ??= current.usageDialogDesign;
+  await writeSettings(design, path);
+  process.stdout.write(`Usage dialog design: ${design}\n`);
 }
 
 async function withScanner<T>(message: string, operation: () => Promise<T>) {
@@ -86,6 +143,7 @@ function parseCliOptions(argv: string[]): CliOptions {
     install: false,
     uninstall: false,
     upgrade: false,
+    settings: false,
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -104,6 +162,15 @@ function parseCliOptions(argv: string[]): CliOptions {
     }
     if (arg === "--uninstall") {
       options.uninstall = true;
+      continue;
+    }
+    if (arg === "--settings") {
+      options.settings = true;
+      const value = argv[index + 1];
+      if (value && !value.startsWith("--")) {
+        options.settingsDesign = parseDesign(value);
+        index += 1;
+      }
       continue;
     }
     if (arg === "--upgrade") {
@@ -137,6 +204,11 @@ function parseCliOptions(argv: string[]): CliOptions {
       options.upgradeVersion = arg.slice("--upgrade=".length) || undefined;
       continue;
     }
+    if (arg.startsWith("--settings=")) {
+      options.settings = true;
+      options.settingsDesign = parseDesign(arg.slice("--settings=".length));
+      continue;
+    }
     throw new Error(`unknown option: ${arg}`);
   }
 
@@ -144,6 +216,8 @@ function parseCliOptions(argv: string[]): CliOptions {
     throw new Error("--install and --uninstall cannot be combined");
   if (options.upgrade && (options.install || options.uninstall))
     throw new Error("--upgrade cannot be combined with --install or --uninstall");
+  if (options.settings && (options.install || options.uninstall || options.upgrade))
+    throw new Error("--settings cannot be combined with install, uninstall, or upgrade");
   return options;
 }
 
@@ -459,13 +533,21 @@ export async function runCli(argv = process.argv.slice(2)) {
     return;
   }
 
-  if (options.help || (!options.install && !options.uninstall && !options.upgrade)) {
+  if (
+    options.help ||
+    (!options.install && !options.uninstall && !options.upgrade && !options.settings)
+  ) {
     process.stdout.write(`${helpText()}\n`);
     return;
   }
 
   if (options.upgrade) {
     await upgradeInstalledPackage(options.upgradeVersion);
+    return;
+  }
+
+  if (options.settings) {
+    await configureDesign(options);
     return;
   }
 
@@ -479,6 +561,7 @@ export async function runCli(argv = process.argv.slice(2)) {
       ]),
   );
   process.stdout.write(`${messages.join("\n")}\n`);
+  if (options.install) await configureDesign(options, true);
 }
 
 export async function runCliSafely(argv = process.argv.slice(2)) {

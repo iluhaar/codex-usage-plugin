@@ -20,6 +20,14 @@ OpenCode plugin that exposes a `/codex-usage` TUI command and `<leader>i` shortc
 3. Restart OpenCode.
 4. Run `/codex-usage` in the OpenCode TUI, or press the leader key then `i` (`ctrl+x` then `i` by default).
 
+The installer asks which usage dialog design to use. The compact `v1` design remains the default. To change it later, run:
+
+```sh
+codex-usage-plugin --settings
+```
+
+For non-interactive use, pass `--settings=v1` or `--settings=v2`.
+
 To remove the plugin registration:
 
 ```sh

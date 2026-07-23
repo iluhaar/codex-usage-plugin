@@ -1,7 +1,12 @@
 import type { TuiPluginModule } from "@opencode-ai/plugin/tui";
 
 import { getCodexUsage } from "./codex-usage-core.js";
-import { scannerFrames, scannerIntervalMs } from "./scanner-animation.js";
+import {
+  progressScannerFrames,
+  scannerFrames,
+  scannerIntervalMs,
+} from "./scanner-animation.js";
+import { readSettings } from "./settings.js";
 
 const commandName = "codex-usage.show";
 const shortcut = "<leader>i";
@@ -23,28 +28,41 @@ export default {
       if (loading || disposed) return;
       loading = true;
 
-      const animated = api.kv?.get("animations_enabled", true) ?? true;
-      let frame = 0;
-      const showLoading = () => {
-        api.ui.toast({
-          title: "Fetching Codex Usage",
-          message: `${animated ? scannerFrames[frame] : "[⋯]"}`,
-          variant: "info",
-          duration: 1000,
-        });
-        frame = (frame + 1) % scannerFrames.length;
-      };
-
-      showLoading();
-      if (animated) animation = setInterval(showLoading, scannerIntervalMs);
-
       try {
+        const settings = await readSettings();
+        const animated = api.kv?.get("animations_enabled", true) ?? true;
+        const frames =
+          settings.usageDialogDesign === "v2"
+            ? progressScannerFrames
+            : scannerFrames;
+        let frame = 0;
+        const showLoading = () => {
+          api.ui.toast({
+            title: "Fetching Codex Usage",
+            message: animated
+              ? frames[frame]
+              : settings.usageDialogDesign === "v2"
+                ? "[░░░░░░░░░░░░░░░░░░░░]"
+                : "[⋯]",
+            variant: "info",
+            duration: 1000,
+          });
+          frame = (frame + 1) % frames.length;
+        };
+
+        showLoading();
+        if (animated) animation = setInterval(showLoading, scannerIntervalMs);
+
         const result = await getCodexUsage();
         if (disposed) return;
         stopAnimation();
         api.ui.toast({
-          title: "Codex Usage",
-          message: result.toast,
+          title:
+            settings.usageDialogDesign === "v2"
+              ? "Codex Usage Status"
+              : "Codex Usage",
+          message:
+            settings.usageDialogDesign === "v2" ? result.toastV2 : result.toast,
           variant: "success",
         });
       } catch (error) {
