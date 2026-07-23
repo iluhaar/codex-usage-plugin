@@ -134,6 +134,19 @@ await test("version prints the current package version", async () => {
   assert.equal(result.stdout, `${version}\n`);
 });
 
+await test("settings flag persists the selected dialog design", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "codex-usage-plugin-"));
+  const tuiConfigPath = join(dir, "tui.json");
+
+  const result = await runCli(["--settings=v2", "--tui-config", tuiConfigPath]);
+  const settings = JSON.parse(
+    await readFile(join(dir, "codex-usage-plugin.json"), "utf8"),
+  );
+
+  assert.equal(settings.usageDialogDesign, "v2");
+  assert.match(result.stdout, /Usage dialog design: v2/);
+});
+
 await test("upgrade installs the latest package version outside its package directory", async () => {
   await withFakeNpm(async ({ argsFile, cwdFile, env }) => {
     const result = await runCli(["--upgrade"], env);
@@ -388,7 +401,9 @@ await test("tui slash command animates the native toast without chat output", as
   const authPath = join(authHome, "auth.json");
   const originalEnv = {
     OPENCODE_AUTH_PATH: process.env.OPENCODE_AUTH_PATH,
+    CODEX_USAGE_SETTINGS_PATH: process.env.CODEX_USAGE_SETTINGS_PATH,
   };
+  const settingsPath = join(dir, "codex-usage-plugin.json");
 
   await mkdir(authHome, { recursive: true });
   await writeFile(
@@ -398,6 +413,12 @@ await test("tui slash command animates the native toast without chat output", as
   );
 
   process.env.OPENCODE_AUTH_PATH = authPath;
+  process.env.CODEX_USAGE_SETTINGS_PATH = settingsPath;
+  await writeFile(
+    settingsPath,
+    JSON.stringify({ usageDialogDesign: "v2" }),
+    "utf8",
+  );
 
   const toasts = [];
   let registeredCommands = [];
@@ -416,6 +437,7 @@ await test("tui slash command animates the native toast without chat output", as
           primary_window: {
             used_percent: 25,
             limit_window_seconds: 18_000,
+            reset_at: Math.floor(Date.now() / 1000) + 4_320,
           },
         },
       }),
@@ -451,11 +473,21 @@ await test("tui slash command animates the native toast without chat output", as
     await assert.doesNotReject(() => command.onSelect());
 
     assert.equal(toasts[0].title, "Fetching Codex Usage");
-    assert.match(toasts[0].message, /^[🟦🔹]{8}$/u);
-    assert.match(toasts.at(-1).message, /5h: .+75% left/);
+    assert.match(toasts[0].message, /^\[[█░]{20}\]$/u);
+    assert.equal(toasts.at(-1).title, "Codex Usage Status");
+    assert.match(
+      toasts.at(-1).message,
+      /Primary \(5h\)\s+: \[█{15}░{5}\] 75% left/u,
+    );
+    assert.match(toasts.at(-1).message, /75% left\nResets in 1h 12m/);
   } finally {
     globalThis.fetch = originalFetch;
     process.env.OPENCODE_AUTH_PATH = originalEnv.OPENCODE_AUTH_PATH;
+    if (originalEnv.CODEX_USAGE_SETTINGS_PATH === undefined)
+      delete process.env.CODEX_USAGE_SETTINGS_PATH;
+    else
+      process.env.CODEX_USAGE_SETTINGS_PATH =
+        originalEnv.CODEX_USAGE_SETTINGS_PATH;
   }
 });
 
@@ -463,6 +495,8 @@ await test("tui usage command ignores concurrent invocations", async () => {
   const dir = await mkdtemp(join(tmpdir(), "codex-usage-plugin-"));
   const authPath = join(dir, "auth.json");
   const originalAuthPath = process.env.OPENCODE_AUTH_PATH;
+  const originalSettingsPath = process.env.CODEX_USAGE_SETTINGS_PATH;
+  const settingsPath = join(dir, "codex-usage-plugin.json");
   const originalFetch = globalThis.fetch;
   let resolveFetch;
   let markFetchStarted;
@@ -480,6 +514,12 @@ await test("tui usage command ignores concurrent invocations", async () => {
     "utf8",
   );
   process.env.OPENCODE_AUTH_PATH = authPath;
+  process.env.CODEX_USAGE_SETTINGS_PATH = settingsPath;
+  await writeFile(
+    settingsPath,
+    JSON.stringify({ usageDialogDesign: "v1" }),
+    "utf8",
+  );
   globalThis.fetch = async (url) => {
     fetchCount += 1;
     if (String(url).includes("/profiles/me")) {
@@ -533,5 +573,8 @@ await test("tui usage command ignores concurrent invocations", async () => {
     globalThis.fetch = originalFetch;
     if (originalAuthPath === undefined) delete process.env.OPENCODE_AUTH_PATH;
     else process.env.OPENCODE_AUTH_PATH = originalAuthPath;
+    if (originalSettingsPath === undefined)
+      delete process.env.CODEX_USAGE_SETTINGS_PATH;
+    else process.env.CODEX_USAGE_SETTINGS_PATH = originalSettingsPath;
   }
 });

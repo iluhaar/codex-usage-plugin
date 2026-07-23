@@ -273,6 +273,51 @@ function renderToastMessage(usage: UsagePayload) {
     : "No displayable limit data returned for this account.";
 }
 
+function renderStatusPanel(usage: UsagePayload) {
+  const windows: Array<{ label: string; window: RateLimitWindow }> = [];
+  const appendWindows = (
+    prefix: string | undefined,
+    details: RateLimitDetails | undefined,
+  ) => {
+    for (const entry of [
+      { window: details?.primary_window, secondary: false },
+      { window: details?.secondary_window, secondary: true },
+    ]) {
+      if (!entry.window) continue;
+      const duration = limitLabel(
+        entry.window.limit_window_seconds,
+        entry.secondary,
+      ).replace(/ limit$/i, "");
+      const name = entry.secondary ? "Secondary" : "Primary";
+      windows.push({
+        label: `${prefix ? `${prefix} ` : ""}${name} (${duration})`,
+        window: entry.window,
+      });
+    }
+  };
+
+  appendWindows(undefined, usage.rate_limit ?? undefined);
+  for (const additional of usage.additional_rate_limits ?? []) {
+    appendWindows(
+      additional.limit_name ?? additional.metered_feature ?? "Additional",
+      additional.rate_limit ?? undefined,
+    );
+  }
+  if (!windows.length)
+    return "No displayable limit data returned for this account.";
+
+  const labelWidth = Math.max(...windows.map(({ label }) => label.length));
+  return windows
+    .map(({ label, window }) => {
+      const used = clamp(numberValue(window.used_percent), 0, 100);
+      const remaining = 100 - used;
+      const reset = relativeResetLabel(window.reset_at);
+      const row = `${label.padEnd(labelWidth)} : ${progress(remaining)} ${remaining.toFixed(0)}% left`;
+      return reset ? `${row}\n${reset}` : row;
+    })
+    .join("\n");
+}
+
 function renderLimitRows(usage: UsagePayload) {
   const rows: string[] = [];
   rows.push(...renderWindowRows(undefined, usage.rate_limit ?? undefined));
@@ -401,6 +446,25 @@ function resetSuffix(epochSeconds: number | undefined) {
   return ` (resets ${new Date(epochSeconds * 1000).toLocaleString()})`;
 }
 
+function relativeResetLabel(epochSeconds: number | undefined) {
+  if (
+    typeof epochSeconds !== "number" ||
+    !Number.isFinite(epochSeconds) ||
+    epochSeconds <= 0
+  )
+    return "";
+  const minutes = Math.max(0, Math.ceil((epochSeconds * 1000 - Date.now()) / 60_000));
+  const days = Math.floor(minutes / (60 * 24));
+  const hours = Math.floor((minutes % (60 * 24)) / 60);
+  const remainingMinutes = minutes % 60;
+  const parts = [
+    days ? `${days}d` : undefined,
+    hours ? `${hours}h` : undefined,
+    remainingMinutes || (!days && !hours) ? `${remainingMinutes}m` : undefined,
+  ].filter(Boolean);
+  return `Resets in ${parts.join(" ")}`;
+}
+
 function progress(remaining: number) {
   const width = 20;
   const filled = Math.min(
@@ -459,5 +523,6 @@ export async function getCodexUsage(options?: { requestTimeoutMs?: number }) {
   return {
     markdown: renderUsage(auth, idToken, usage, profile),
     toast: renderToastMessage(usage),
+    toastV2: renderStatusPanel(usage),
   };
 }

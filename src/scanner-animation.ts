@@ -17,6 +17,13 @@ export const scannerFrames = scannerHeads.map((head) =>
   Array.from({ length: width }, (_, index) => (index === head ? activeBlock : inactiveBlock)).join(""),
 );
 
+const progressWidth = 20;
+export const progressScannerFrames = Array.from(
+  { length: progressWidth + 1 },
+  (_, filled) =>
+    `[${"█".repeat(filled)}${"░".repeat(progressWidth - filled)}]`,
+);
+
 export const terminalScannerFrames = scannerHeads.map((head) =>
   Array.from({ length: width }, (_, index) =>
     index === head ? activeTerminalBlock : inactiveTerminalBlock,
