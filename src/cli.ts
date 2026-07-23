@@ -475,20 +475,6 @@ async function writeConfig(
   return `${action === "install" ? "Updated" : "Removed from"}: ${target.path}`;
 }
 
-async function cleanupConfigIfExists(target: ConfigTarget) {
-  const current = await readConfig(target.path);
-  if (current === undefined) return;
-
-  const next = updateConfigContent(current, target, "uninstall");
-  if (next === current) {
-    process.stdout.write(`No changes needed: ${target.path}\n`);
-    return;
-  }
-
-  await writeFile(target.path, next, "utf8");
-  process.stdout.write(`Removed old registration from: ${target.path}\n`);
-}
-
 function serverConfigTargets(options: CliOptions): ConfigTarget[] {
   const root = repoRootFromDist();
   return [
