@@ -30,6 +30,11 @@ export default {
     let animation: ReturnType<typeof setInterval> | undefined;
     let compactTimeout: ReturnType<typeof setTimeout> | undefined;
     const [compactMessage, setCompactMessage] = createSignal<string>();
+    const clearCompactMessage = () => {
+      if (compactTimeout) clearTimeout(compactTimeout);
+      compactTimeout = undefined;
+      setCompactMessage(undefined);
+    };
 
     if (api.slots && api.theme) {
       api.slots.register({
@@ -73,10 +78,7 @@ export default {
           },
         },
       });
-      api.lifecycle?.onDispose(() => {
-        if (compactTimeout) clearTimeout(compactTimeout);
-        setCompactMessage(undefined);
-      });
+      api.lifecycle?.onDispose(clearCompactMessage);
     }
 
     const stopAnimation = () => {
@@ -88,6 +90,7 @@ export default {
     const showUsage = async () => {
       if (loading || disposed) return;
       loading = true;
+      clearCompactMessage();
 
       try {
         const settings = await readSettings();
@@ -121,10 +124,8 @@ export default {
           // Replace the loading toast, then let the themed slot render each status.
           api.ui.toast({ message: " ", variant: "success", duration: 1 });
           setCompactMessage(result.toast);
-          if (compactTimeout) clearTimeout(compactTimeout);
           compactTimeout = setTimeout(() => {
-            setCompactMessage(undefined);
-            compactTimeout = undefined;
+            clearCompactMessage();
           }, 5000);
           compactTimeout.unref();
         } else {
