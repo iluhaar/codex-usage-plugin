@@ -45,7 +45,9 @@
     "test": "node --test test/plugin.test.mjs"
   },
   "dependencies": {
-    "@opencode-ai/plugin": "latest"
+    "@opencode-ai/plugin": "latest",
+    "@opentui/solid": "0.4.5",
+    "solid-js": "^1.9.9"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
