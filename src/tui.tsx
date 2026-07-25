@@ -1,4 +1,6 @@
-import type { TuiPluginModule } from "@opencode-ai/plugin/tui";
+/** @jsxImportSource @opentui/solid */
+import type { TuiPluginModule, TuiThemeCurrent } from "@opencode-ai/plugin/tui";
+import { createSignal, For, Show } from "solid-js";
 
 import { getCodexUsage } from "./codex-usage-core.js";
 import {
@@ -11,12 +13,71 @@ import { readSettings } from "./settings.js";
 const commandName = "codex-usage.show";
 const shortcut = "<leader>i";
 
+const indicatorColor = (
+  indicator: string,
+  theme: TuiThemeCurrent,
+) => {
+  if (indicator === "🔴") return theme.error;
+  if (indicator === "🟡") return theme.warning;
+  return theme.success;
+};
+
 export default {
   id: "codex-usage-tui",
   tui: async (api) => {
     let loading = false;
     let disposed = false;
     let animation: ReturnType<typeof setInterval> | undefined;
+    let compactTimeout: ReturnType<typeof setTimeout> | undefined;
+    const [compactMessage, setCompactMessage] = createSignal<string>();
+
+    if (api.slots && api.theme) {
+      api.slots.register({
+        slots: {
+          app({ theme }) {
+            return (
+              <Show when={compactMessage()} keyed>
+                {(message) => (
+                  <box
+                    position="absolute"
+                    top={2}
+                    right={2}
+                    maxWidth={60}
+                    paddingLeft={2}
+                    paddingRight={2}
+                    paddingTop={1}
+                    paddingBottom={1}
+                    backgroundColor={theme.current.backgroundPanel}
+                    borderColor={theme.current.success}
+                    border={["left", "right"]}
+                    zIndex={2000}
+                  >
+                    <text fg={theme.current.text} marginBottom={1}>
+                      <b>Codex Usage</b>
+                    </text>
+                    <text fg={theme.current.text} wrapMode="word" width="100%">
+                      <For each={message.split(/(🔴|🟡|🟢)/u)}>
+                        {(part) =>
+                          /^(🔴|🟡|🟢)$/u.test(part) ? (
+                            <span style={{ fg: indicatorColor(part, theme.current) }}>●</span>
+                          ) : (
+                            part
+                          )
+                        }
+                      </For>
+                    </text>
+                  </box>
+                )}
+              </Show>
+            );
+          },
+        },
+      });
+      api.lifecycle?.onDispose(() => {
+        if (compactTimeout) clearTimeout(compactTimeout);
+        setCompactMessage(undefined);
+      });
+    }
 
     const stopAnimation = () => {
       if (!animation) return;
@@ -56,15 +117,27 @@ export default {
         const result = await getCodexUsage();
         if (disposed) return;
         stopAnimation();
-        api.ui.toast({
-          title:
-            settings.usageDialogDesign === "v2"
-              ? "Codex Usage Status"
-              : "Codex Usage",
-          message:
-            settings.usageDialogDesign === "v2" ? result.toastV2 : result.toast,
-          variant: "success",
-        });
+        if (settings.usageDialogDesign === "v1" && api.slots && api.theme) {
+          // Replace the loading toast, then let the themed slot render each status.
+          api.ui.toast({ message: " ", variant: "success", duration: 1 });
+          setCompactMessage(result.toast);
+          if (compactTimeout) clearTimeout(compactTimeout);
+          compactTimeout = setTimeout(() => {
+            setCompactMessage(undefined);
+            compactTimeout = undefined;
+          }, 5000);
+          compactTimeout.unref();
+        } else {
+          api.ui.toast({
+            title:
+              settings.usageDialogDesign === "v2"
+                ? "Codex Usage Status"
+                : "Codex Usage",
+            message:
+              settings.usageDialogDesign === "v2" ? result.toastV2 : result.toast,
+            variant: "success",
+          });
+        }
       } catch (error) {
         if (disposed) return;
         stopAnimation();
