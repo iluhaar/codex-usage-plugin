@@ -36,6 +36,7 @@ type IdTokenInfo = {
   chatgpt_account_id?: string;
   chatgpt_account_is_fedramp?: boolean;
   raw_jwt?: string;
+  exp?: number;
 };
 
 type UsagePayload = {

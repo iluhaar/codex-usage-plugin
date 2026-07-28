@@ -8,6 +8,30 @@ const USAGE_URL = `${CHATGPT_BACKEND_URL}/wham/usage`;
 const PROFILE_URL = `${CHATGPT_BACKEND_URL}/wham/profiles/me`;
 const CHATGPT_USAGE_URL = "https://chatgpt.com/codex/settings/usage";
 
+export type CodexUsageIdTokenInfo = {
+  email?: string;
+  chatgpt_plan_type?: string | { type?: string; value?: string } | null;
+  chatgpt_user_id?: string;
+  chatgpt_account_id?: string;
+  chatgpt_account_is_fedramp?: boolean;
+  raw_jwt?: string;
+  exp?: number;
+};
+
+export type CodexUsageCredentials = {
+  accessToken: string;
+  accountId?: string;
+  idToken?: string | CodexUsageIdTokenInfo;
+  isFedramp?: boolean;
+};
+
+export type CodexUsageOptions = {
+  requestTimeoutMs?: number;
+  signal?: AbortSignal;
+  credentials?: CodexUsageCredentials;
+  authContent?: unknown;
+};
+
 function codexHome() {
   const fromEnv = process.env.CODEX_HOME?.trim();
   if (fromEnv) return resolve(fromEnv);
@@ -64,32 +88,55 @@ function normalizeAuthFile(raw: unknown): CodexAuthFile | undefined {
   return undefined;
 }
 
+function hasApiKeyOnlyAuth(parsed: unknown) {
+  if (!parsed || typeof parsed !== "object") return false;
+  const record = parsed as Record<string, unknown>;
+  if (typeof record.OPENAI_API_KEY === "string" && stringValue(record.OPENAI_API_KEY)) {
+    return true;
+  }
+  const openai = record.openai as Record<string, unknown> | undefined;
+  return (
+    stringValue(openai?.key) !== undefined ||
+    stringValue(openai?.apiKey) !== undefined ||
+    stringValue(openai?.api_key) !== undefined ||
+    stringValue(openai?.OPENAI_API_KEY) !== undefined ||
+    (openai?.type === "api" && !stringValue(openai?.access))
+  );
+}
+
+function parseAuthContent(content: unknown, source: string) {
+  try {
+    const parsed = typeof content === "string" ? (JSON.parse(content) as unknown) : content;
+    const auth = normalizeAuthFile(parsed);
+    if (!auth?.tokens?.access_token && hasApiKeyOnlyAuth(parsed)) {
+      throw new Error(
+        "Codex is configured with an API key. ChatGPT/Codex OAuth auth is required to read usage limits.",
+      );
+    }
+    if (!auth?.tokens?.access_token) {
+      throw new Error(`${source} does not contain ChatGPT OAuth tokens.`);
+    }
+    return auth;
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      // eslint-disable-next-line preserve-caught-error -- JSON.parse errors can include auth content snippets.
+      throw new Error(`${source} is not valid auth JSON.`);
+    }
+    throw error;
+  }
+}
+
 async function readAuthFile(authPath: string) {
   if (!existsSync(authPath)) return undefined;
 
   const raw = await readFile(authPath, "utf8");
-  const parsed = JSON.parse(raw) as unknown;
-  const auth = normalizeAuthFile(parsed);
-  if (
-    !auth?.tokens?.access_token &&
-    parsed &&
-    typeof parsed === "object" &&
-    typeof (parsed as { OPENAI_API_KEY?: unknown }).OPENAI_API_KEY === "string" &&
-    stringValue((parsed as { OPENAI_API_KEY?: unknown }).OPENAI_API_KEY)
-  ) {
-    throw new Error(
-      "Codex is configured with an API key. ChatGPT/Codex OAuth auth is required to read usage limits.",
-    );
-  }
-
-  if (!auth?.tokens?.access_token) {
-    throw new Error(`Auth file at ${authPath} does not contain ChatGPT OAuth tokens.`);
-  }
-
-  return auth;
+  return parseAuthContent(raw, `Auth file at ${authPath}`);
 }
 
 async function readAuth() {
+  const authContent = process.env.OPENCODE_AUTH_CONTENT;
+  if (authContent?.trim()) return parseAuthContent(authContent, "OPENCODE_AUTH_CONTENT");
+
   const authPaths = [
     openCodeAuthPath(),
     join(homedir(), ".local", "share", "opencode", "auth.json"),
@@ -142,10 +189,72 @@ function decodeIdToken(auth: CodexAuthFile): IdTokenInfo {
       chatgpt_account_is_fedramp:
         authClaims?.chatgpt_account_is_fedramp === true,
       raw_jwt: idToken,
+      exp: typeof claims.exp === "number" ? claims.exp : undefined,
     };
   } catch {
     return { raw_jwt: idToken };
   }
+}
+
+function authFromCredentials(credentials: CodexUsageCredentials): CodexAuthFile {
+  const accessToken = stringValue(credentials.accessToken);
+  if (!accessToken) {
+    throw new Error("ChatGPT/Codex OAuth access token is required to read usage limits.");
+  }
+  return {
+    tokens: {
+      access_token: accessToken,
+      account_id: stringValue(credentials.accountId),
+      id_token: credentials.idToken,
+    },
+  };
+}
+
+async function resolveAuth(options: CodexUsageOptions | undefined) {
+  if (options?.credentials) return authFromCredentials(options.credentials);
+  if (options && "authContent" in options && options.authContent !== undefined) {
+    return parseAuthContent(options.authContent, "authContent");
+  }
+  return readAuth();
+}
+
+function assertNotExpired(idToken: IdTokenInfo) {
+  if (
+    typeof idToken.exp === "number" &&
+    Number.isFinite(idToken.exp) &&
+    idToken.exp <= Math.floor(Date.now() / 1000)
+  ) {
+    throw new Error("ChatGPT/Codex OAuth token is expired. Please sign in again.");
+  }
+}
+
+function isRequestTimeout(error: unknown) {
+  return error instanceof Error && /^Request timed out after \d+ms$/.test(error.message);
+}
+
+function composeRequestSignal(timeoutMs: number, callerSignal: AbortSignal | undefined) {
+  const controller = new AbortController();
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const abortFromCaller = () => {
+    controller.abort(callerSignal?.reason ?? new Error("Request aborted."));
+  };
+
+  if (timeoutMs > 0) {
+    timeoutId = setTimeout(
+      () => controller.abort(new Error(`Request timed out after ${timeoutMs}ms`)),
+      timeoutMs,
+    );
+  }
+  if (callerSignal?.aborted) abortFromCaller();
+  else callerSignal?.addEventListener("abort", abortFromCaller, { once: true });
+
+  return {
+    signal: controller.signal,
+    cleanup() {
+      if (timeoutId) clearTimeout(timeoutId);
+      callerSignal?.removeEventListener("abort", abortFromCaller);
+    },
+  };
 }
 
 function stringValue(value: unknown) {
@@ -172,15 +281,9 @@ async function fetchJson<T>(
   auth: CodexAuthFile,
   idToken: IdTokenInfo,
   timeoutMs = 10_000,
+  callerSignal?: AbortSignal,
 ): Promise<T> {
-  const controller = new AbortController();
-  const timeoutId =
-    timeoutMs > 0
-      ? setTimeout(
-          () => controller.abort(new Error(`Request timed out after ${timeoutMs}ms`)),
-          timeoutMs,
-        )
-      : undefined;
+  const requestSignal = composeRequestSignal(timeoutMs, callerSignal);
 
   const headers: Record<string, string> = {
     Authorization: `Bearer ${auth.tokens?.access_token ?? ""}`,
@@ -191,22 +294,18 @@ async function fetchJson<T>(
   if (idToken.chatgpt_account_is_fedramp) headers["X-OpenAI-Fedramp"] = "true";
 
   try {
-    const response = await fetch(url, { headers, signal: controller.signal });
+    const response = await fetch(url, { headers, signal: requestSignal.signal });
     if (!response.ok) {
-      const body = await response.text().catch(() => "");
-      const safeBody = body
-        .slice(0, 500)
-        .replace(
-          /[A-Za-z0-9_-]{24,}\.[A-Za-z0-9_-]{24,}\.[A-Za-z0-9_-]{24,}/g,
-          "<redacted-jwt>",
-        );
-      throw new Error(
-        `${url} failed with HTTP ${response.status}${safeBody ? `: ${safeBody}` : ""}`,
-      );
+      throw new Error(`${url} failed with HTTP ${response.status}.`);
     }
     return (await response.json()) as T;
+  } catch (error) {
+    if (requestSignal.signal.aborted) {
+      throw requestSignal.signal.reason ?? new Error("Request aborted.");
+    }
+    throw error;
   } finally {
-    if (timeoutId) clearTimeout(timeoutId);
+    requestSignal.cleanup();
   }
 }
 
@@ -499,15 +598,18 @@ function formatCreditUsage(
   return `${Math.round(usedNumber).toLocaleString()} of ${Math.round(limitNumber).toLocaleString()} credits used`;
 }
 
-export async function getCodexUsage(options?: { requestTimeoutMs?: number }) {
-  const auth = await readAuth();
+export async function getCodexUsage(options?: CodexUsageOptions) {
+  const auth = await resolveAuth(options);
   const idToken = decodeIdToken(auth);
+  if (options?.credentials?.isFedramp) idToken.chatgpt_account_is_fedramp = true;
+  assertNotExpired(idToken);
   const requestTimeoutMs = options?.requestTimeoutMs ?? 10_000;
   const usage = await fetchJson<UsagePayload>(
     USAGE_URL,
     auth,
     idToken,
     requestTimeoutMs,
+    options?.signal,
   );
   let profile: TokenUsageProfile | undefined;
   try {
@@ -516,8 +618,11 @@ export async function getCodexUsage(options?: { requestTimeoutMs?: number }) {
       auth,
       idToken,
       requestTimeoutMs,
+      options?.signal,
     );
-  } catch {
+  } catch (error) {
+    if (options?.signal?.aborted) throw options.signal.reason ?? new Error("Request aborted.");
+    if (isRequestTimeout(error)) throw error;
     profile = undefined;
   }
   return {
