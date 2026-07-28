@@ -138,6 +138,77 @@ await test("version prints the current package version", async () => {
   assert.equal(result.stdout, `${version}\n`);
 });
 
+await test("packed package resolves JavaScript and declarations for all entrypoints", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "codex-usage-plugin-pack-"));
+  const pack = await execFileAsync("npm", ["pack", "--pack-destination", dir], {
+    cwd: repoRoot,
+    env: process.env,
+  });
+  const tarball = join(dir, pack.stdout.trim().split(/\r?\n/u).at(-1));
+
+  await writeFile(
+    join(dir, "package.json"),
+    JSON.stringify({ private: true, type: "module" }),
+    "utf8",
+  );
+  await execFileAsync("npm", ["install", "--ignore-scripts", tarball], {
+    cwd: dir,
+    env: process.env,
+  });
+
+  await execFileAsync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "--eval",
+      `
+        const root = (await import("@illiadotdev/codex-usage-plugin")).default;
+        const server = (await import("@illiadotdev/codex-usage-plugin/server")).default;
+        const tui = (await import("@illiadotdev/codex-usage-plugin/tui")).default;
+        if (typeof root.server !== "function") throw new Error("root server missing");
+        if (typeof server.setup !== "function") throw new Error("server setup missing");
+        if (typeof tui.setup !== "function") throw new Error("tui setup missing");
+      `,
+    ],
+    { cwd: dir, env: process.env },
+  );
+
+  await writeFile(
+    join(dir, "entrypoint-types.ts"),
+    `
+      import root from "@illiadotdev/codex-usage-plugin";
+      import server from "@illiadotdev/codex-usage-plugin/server";
+      import tui from "@illiadotdev/codex-usage-plugin/tui";
+
+      root.server;
+      server.setup;
+      tui.setup;
+    `,
+    "utf8",
+  );
+  await writeFile(
+    join(dir, "tsconfig.json"),
+    JSON.stringify({
+      compilerOptions: {
+        module: "NodeNext",
+        moduleResolution: "NodeNext",
+        target: "ES2022",
+        strict: true,
+        skipLibCheck: true,
+        noEmit: true,
+      },
+      include: ["entrypoint-types.ts"],
+    }),
+    "utf8",
+  );
+
+  await execFileAsync(
+    process.execPath,
+    [join(repoRoot, "node_modules", "typescript", "bin", "tsc"), "-p", dir],
+    { cwd: dir, env: process.env },
+  );
+});
+
 await test("settings flag persists the selected dialog design", async () => {
   const dir = await mkdtemp(join(tmpdir(), "codex-usage-plugin-"));
   const tuiConfigPath = join(dir, "tui.json");
