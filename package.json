@@ -6,7 +6,18 @@
   "private": false,
   "type": "module",
   "exports": {
-    ".": "./dist/index.js"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./server": {
+      "types": "./dist/server.d.ts",
+      "import": "./dist/server.js"
+    },
+    "./tui": {
+      "types": "./dist/native-tui.d.ts",
+      "import": "./dist/native-tui.js"
+    }
   },
   "repository": {
     "type": "git",
@@ -34,6 +45,28 @@
     "quota",
     "tui"
   ],
+  "opencode": {
+    "compatibility": [
+      {
+        "channel": "stable",
+        "package": "@opencode-ai/plugin@1.18.8",
+        "api": "v1 root/plugin-tui plus v2 promise scaffolding",
+        "entrypoints": [
+          ".",
+          "./server"
+        ]
+      },
+      {
+        "channel": "next",
+        "package": "@opencode-ai/plugin@0.0.0-next-16378",
+        "api": "promise/tui scaffolding snapshot",
+        "entrypoints": [
+          "./server",
+          "./tui"
+        ]
+      }
+    ]
+  },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "prepack": "npm run build",
@@ -45,7 +78,8 @@
     "test": "node --test test/plugin.test.mjs"
   },
   "dependencies": {
-    "@opencode-ai/plugin": "latest",
+    "@opencode-ai/plugin": "1.18.8",
+    "@opencode-ai/plugin-next": "npm:@opencode-ai/plugin@0.0.0-next-16378",
     "@opentui/solid": "0.4.5",
     "solid-js": "^1.9.9"
   },
