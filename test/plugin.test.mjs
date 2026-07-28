@@ -14,6 +14,10 @@ const distCoreUrl = pathToFileURL(join(repoRoot, "dist", "codex-usage-core.js"))
 const distPluginUrl = pathToFileURL(join(repoRoot, "dist", "index.js")).href;
 const distTuiPluginUrl = pathToFileURL(join(repoRoot, "dist", "tui.js")).href;
 
+function base64UrlJson(value) {
+  return Buffer.from(JSON.stringify(value)).toString("base64url");
+}
+
 async function currentPackageVersion() {
   const packageJson = JSON.parse(await readFile(join(repoRoot, "package.json"), "utf8"));
   return packageJson.version;
@@ -24,6 +28,20 @@ async function runCli(args, env = {}) {
     cwd: repoRoot,
     env: { ...process.env, ...env },
   });
+}
+
+function unsignedJwt(claims) {
+  return `${base64UrlJson({ alg: "none" })}.${base64UrlJson(claims)}.`;
+}
+
+function collectErrorText(error, seen = new Set()) {
+  if (!error || seen.has(error)) return "";
+  seen.add(error);
+  const parts = [String(error), error.message, error.stack];
+  if (typeof error === "object" && "cause" in error) {
+    parts.push(collectErrorText(error.cause, seen));
+  }
+  return parts.filter(Boolean).join("\n");
 }
 
 async function withFakeNpm(testFn, targetVersion = "0.2.15") {
@@ -389,6 +407,258 @@ await test("usage fetch prefers OAuth token when auth file also has API key", as
     globalThis.fetch = originalFetch;
     process.env.OPENCODE_AUTH_PATH = originalEnv.OPENCODE_AUTH_PATH;
     process.env.OPENCODE_CODEX_QUOTA_MODEL = originalEnv.OPENCODE_CODEX_QUOTA_MODEL;
+  }
+});
+
+await test("usage fetch accepts explicit in-memory credentials", async () => {
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init = {}) => {
+    calls.push({ url: String(url), init });
+    return new Response(JSON.stringify({ rate_limit: {} }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+
+  try {
+    const { getCodexUsage } = await import(distCoreUrl);
+    const result = await getCodexUsage({
+      requestTimeoutMs: 100,
+      credentials: { accessToken: "memory-token", accountId: "acct-memory" },
+    });
+
+    assert.equal(calls.length, 2);
+    assert.match(result.markdown, /Workspace account: acct-memory/);
+    assert.equal(calls[0].init.headers.Authorization, "Bearer memory-token");
+    assert.equal(calls[0].init.headers["ChatGPT-Account-ID"], "acct-memory");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+await test("usage fetch reads OPENCODE_AUTH_CONTENT without exposing raw content", async () => {
+  const originalAuthContent = process.env.OPENCODE_AUTH_CONTENT;
+  const originalAuthPath = process.env.OPENCODE_AUTH_PATH;
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+
+  process.env.OPENCODE_AUTH_CONTENT = JSON.stringify({
+    openai: { access: "content-token", accountId: "acct-content" },
+  });
+  process.env.OPENCODE_AUTH_PATH = "/does/not/exist/auth.json";
+  globalThis.fetch = async (url, init = {}) => {
+    calls.push({ url: String(url), init });
+    return new Response(JSON.stringify({ rate_limit: {} }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+
+  try {
+    const { getCodexUsage } = await import(distCoreUrl);
+    await getCodexUsage({ requestTimeoutMs: 100 });
+
+    assert.equal(calls[0].init.headers.Authorization, "Bearer content-token");
+    assert.equal(calls[0].init.headers["ChatGPT-Account-ID"], "acct-content");
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalAuthContent === undefined) delete process.env.OPENCODE_AUTH_CONTENT;
+    else process.env.OPENCODE_AUTH_CONTENT = originalAuthContent;
+    if (originalAuthPath === undefined) delete process.env.OPENCODE_AUTH_PATH;
+    else process.env.OPENCODE_AUTH_PATH = originalAuthPath;
+  }
+});
+
+await test("usage auth rejects API-key-only and malformed in-memory auth safely", async () => {
+  const { getCodexUsage } = await import(distCoreUrl);
+
+  await assert.rejects(
+    () => getCodexUsage({ authContent: { OPENAI_API_KEY: "sk-secret" } }),
+    (error) => {
+      assert.match(error.message, /API key/);
+      assert.doesNotMatch(error.message, /sk-secret/);
+      return true;
+    },
+  );
+  await assert.rejects(
+    () =>
+      getCodexUsage({
+        authContent: { openai: { type: "api", key: "sk-nested-secret" } },
+      }),
+    (error) => {
+      assert.match(error.message, /API key/);
+      assert.doesNotMatch(collectErrorText(error), /sk-nested-secret/);
+      return true;
+    },
+  );
+  await assert.rejects(
+    () => getCodexUsage({ authContent: "{not-json sk-secret}" }),
+    (error) => {
+      assert.match(error.message, /not valid auth JSON/);
+      assert.doesNotMatch(collectErrorText(error), /sk-secret/);
+      return true;
+    },
+  );
+});
+
+await test("usage auth rejects missing and expired OAuth credentials safely", async () => {
+  const { getCodexUsage } = await import(distCoreUrl);
+  const expired = unsignedJwt({ exp: Math.floor(Date.now() / 1000) - 60 });
+
+  await assert.rejects(
+    () => getCodexUsage({ authContent: { tokens: { refresh_token: "refresh-secret" } } }),
+    (error) => {
+      assert.match(error.message, /does not contain ChatGPT OAuth tokens/);
+      assert.doesNotMatch(error.message, /refresh-secret/);
+      return true;
+    },
+  );
+  await assert.rejects(
+    () =>
+      getCodexUsage({
+        credentials: { accessToken: "expired-token", idToken: expired },
+      }),
+    (error) => {
+      assert.match(error.message, /expired/);
+      assert.doesNotMatch(error.message, /expired-token/);
+      assert.doesNotMatch(error.message, new RegExp(expired.replaceAll(".", "\\.")));
+      return true;
+    },
+  );
+});
+
+await test("usage HTTP errors do not expose tokens or response bodies", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    new Response("server body includes secret-token and should stay private", {
+      status: 500,
+      headers: { "content-type": "text/plain" },
+    });
+
+  try {
+    const { getCodexUsage } = await import(distCoreUrl);
+    await assert.rejects(
+      () =>
+        getCodexUsage({
+          requestTimeoutMs: 100,
+          credentials: { accessToken: "secret-token", accountId: "acct-secret" },
+        }),
+      (error) => {
+        assert.match(error.message, /HTTP 500/);
+        assert.doesNotMatch(error.message, /secret-token/);
+        assert.doesNotMatch(error.message, /server body/);
+        return true;
+      },
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+await test("caller AbortSignal cancels profile requests", async () => {
+  const originalFetch = globalThis.fetch;
+  const controller = new AbortController();
+  let profileStarted;
+  const profileFetchStarted = new Promise((resolve) => {
+    profileStarted = resolve;
+  });
+
+  globalThis.fetch = async (url, init = {}) => {
+    if (String(url).includes("/profiles/me")) {
+      profileStarted();
+      return new Promise((_, reject) => {
+        const signal = init.signal;
+        const onAbort = () => reject(signal?.reason ?? new Error("aborted"));
+        if (signal?.aborted) return onAbort();
+        signal?.addEventListener("abort", onAbort, { once: true });
+      });
+    }
+
+    return new Response(JSON.stringify({ rate_limit: {} }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+
+  try {
+    const { getCodexUsage } = await import(distCoreUrl);
+    const pending = getCodexUsage({
+      requestTimeoutMs: 1_000,
+      signal: controller.signal,
+      credentials: { accessToken: "token" },
+    });
+    await profileFetchStarted;
+    controller.abort(new Error("caller cancelled"));
+    await assert.rejects(() => pending, /caller cancelled/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+await test("caller AbortSignal cancels usage requests", async () => {
+  const originalFetch = globalThis.fetch;
+  const controller = new AbortController();
+  let usageStarted;
+  const usageFetchStarted = new Promise((resolve) => {
+    usageStarted = resolve;
+  });
+
+  globalThis.fetch = async (_url, init = {}) => {
+    usageStarted();
+    return new Promise((_, reject) => {
+      const signal = init.signal;
+      const onAbort = () => reject(new Error("fetch dropped abort reason"));
+      if (signal?.aborted) return onAbort();
+      signal?.addEventListener("abort", onAbort, { once: true });
+    });
+  };
+
+  try {
+    const { getCodexUsage } = await import(distCoreUrl);
+    const pending = getCodexUsage({
+      requestTimeoutMs: 1_000,
+      signal: controller.signal,
+      credentials: { accessToken: "token" },
+    });
+    await usageFetchStarted;
+    controller.abort(new Error("caller cancelled usage"));
+    await assert.rejects(() => pending, /caller cancelled usage/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+await test("usage fetch times out profile requests", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init = {}) => {
+    if (String(url).includes("/profiles/me")) {
+      return new Promise((_, reject) => {
+        const signal = init.signal;
+        const onAbort = () => reject(signal?.reason ?? new Error("aborted"));
+        if (signal?.aborted) return onAbort();
+        signal?.addEventListener("abort", onAbort, { once: true });
+      });
+    }
+
+    return new Response(JSON.stringify({ rate_limit: {} }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+
+  try {
+    const { getCodexUsage } = await import(distCoreUrl);
+    await assert.rejects(
+      () =>
+        getCodexUsage({
+          requestTimeoutMs: 25,
+          credentials: { accessToken: "token" },
+        }),
+      /Request timed out after 25ms/,
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
   }
 });
 
