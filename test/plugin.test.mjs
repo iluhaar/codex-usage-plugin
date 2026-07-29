@@ -12,6 +12,7 @@ const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 const cliPath = join(repoRoot, "dist", "bin", "codex-usage-plugin.js");
 const distCoreUrl = pathToFileURL(join(repoRoot, "dist", "codex-usage-core.js")).href;
 const distPluginUrl = pathToFileURL(join(repoRoot, "dist", "index.js")).href;
+const distServerPluginUrl = pathToFileURL(join(repoRoot, "dist", "server.js")).href;
 const distTuiPluginUrl = pathToFileURL(join(repoRoot, "dist", "tui.js")).href;
 
 function base64UrlJson(value) {
@@ -706,6 +707,179 @@ await test("server plugin exposes codex_usage tool", async () => {
   const hooks = await plugin.server({ client: {} });
 
   assert.equal(typeof hooks.tool.codex_usage.execute, "function");
+});
+
+function createV2ServerContext({ connection, credential } = {}) {
+  const registrations = [];
+  const calls = [];
+  return {
+    registrations,
+    calls,
+    ctx: {
+      tool: {
+        transform: async (callback) => {
+          const draft = {
+            add: (toolInfo) => registrations.push(toolInfo),
+          };
+          callback(draft);
+          return { dispose: async () => {} };
+        },
+      },
+      integration: {
+        connection: {
+          active: async (integrationID) => {
+            calls.push(["active", integrationID]);
+            return connection;
+          },
+          resolve: async (input) => {
+            calls.push(["resolve", input]);
+            return credential;
+          },
+        },
+      },
+    },
+  };
+}
+
+await test("v2 server plugin registers directly callable codex_usage tool metadata", async () => {
+  const plugin = (await import(distServerPluginUrl)).default;
+  const mock = createV2ServerContext();
+
+  assert.equal(plugin.id, "codex-usage-server-v2");
+  await plugin.setup(mock.ctx);
+
+  assert.equal(mock.registrations.length, 1);
+  assert.equal(mock.registrations[0].name, "codex_usage");
+  assert.equal(mock.registrations[0].options.codemode, false);
+  assert.equal(mock.registrations[0].input.type, "object");
+  assert.equal(mock.registrations[0].output.type, "object");
+  assert.equal(typeof mock.registrations[0].execute, "function");
+});
+
+await test("v2 codex_usage resolves active OpenAI OAuth credentials and returns structured usage", async () => {
+  const plugin = (await import(distServerPluginUrl)).default;
+  const mock = createV2ServerContext({
+    connection: { type: "credential", id: "cred-1", label: "OpenAI" },
+    credential: {
+      type: "oauth",
+      methodID: "oauth",
+      refresh: "refresh-secret",
+      access: "oauth-access",
+      expires: Math.floor(Date.now() / 1000) + 3600,
+      metadata: { accountId: "acct-v2", idToken: unsignedJwt({ email: "v2@example.com" }) },
+    },
+  });
+  const fetchCalls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init = {}) => {
+    fetchCalls.push({ url: String(url), init });
+    if (String(url).includes("/profiles/me")) {
+      return new Response(JSON.stringify({ stats: { lifetime_tokens: 777 } }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    return new Response(JSON.stringify({ rate_limit: {} }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+
+  try {
+    await plugin.setup(mock.ctx);
+    const result = await mock.registrations[0].execute({}, { progress: async () => {} });
+
+    assert.deepEqual(mock.calls[0], ["active", "openai"]);
+    assert.deepEqual(mock.calls[1], ["resolve", { type: "credential", id: "cred-1", label: "OpenAI" }]);
+    assert.equal(fetchCalls[0].init.headers.Authorization, "Bearer oauth-access");
+    assert.equal(fetchCalls[0].init.headers["ChatGPT-Account-ID"], "acct-v2");
+    assert.match(result.content, /# Codex Usage/);
+    assert.match(result.output.markdown, /Workspace account: acct-v2/);
+    assert.equal(result.output.toast, "No displayable limit data returned for this account.");
+    assert.equal(result.metadata.toastV2, result.output.toastV2);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+await test("v2 codex_usage propagates cancellation signal when provided", async () => {
+  const plugin = (await import(distServerPluginUrl)).default;
+  const controller = new AbortController();
+  let usageStarted;
+  const usageFetchStarted = new Promise((resolve) => {
+    usageStarted = resolve;
+  });
+  const mock = createV2ServerContext({
+    connection: { type: "credential", id: "cred-1", label: "OpenAI" },
+    credential: {
+      type: "oauth",
+      methodID: "oauth",
+      refresh: "refresh-secret",
+      access: "oauth-access",
+      expires: Math.floor(Date.now() / 1000) + 3600,
+      metadata: {},
+    },
+  });
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (_url, init = {}) => {
+    usageStarted();
+    return new Promise((_, reject) => {
+      const signal = init.signal;
+      const onAbort = () => reject(signal?.reason ?? new Error("aborted"));
+      if (signal?.aborted) return onAbort();
+      signal?.addEventListener("abort", onAbort, { once: true });
+    });
+  };
+
+  try {
+    await plugin.setup(mock.ctx);
+    const pending = mock.registrations[0].execute({}, {
+      progress: async () => {},
+      signal: controller.signal,
+    });
+    await usageFetchStarted;
+    controller.abort(new Error("v2 caller cancelled"));
+    await assert.rejects(() => pending, /v2 caller cancelled/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+await test("v2 codex_usage reports safe missing and non-OAuth connection errors", async () => {
+  const plugin = (await import(distServerPluginUrl)).default;
+
+  await Promise.all([
+    { options: {}, pattern: /No active OpenAI connection/ },
+    {
+      options: { connection: { type: "env", name: "OPENAI_API_KEY" } },
+      pattern: /environment variables.*OAuth auth is required/,
+    },
+    {
+      options: {
+        connection: { type: "credential", id: "cred-key", label: "OpenAI" },
+        credential: { type: "key", key: "sk-secret", metadata: {} },
+      },
+      pattern: /API key.*OAuth auth is required/,
+    },
+    {
+      options: {
+        connection: { type: "credential", id: "cred-oauth", label: "OpenAI" },
+        credential: undefined,
+      },
+      pattern: /could not be resolved/,
+    },
+  ].map(async ({ options, pattern }) => {
+    const mock = createV2ServerContext(options);
+    await plugin.setup(mock.ctx);
+    await assert.rejects(
+      () => mock.registrations[0].execute({}, { progress: async () => {} }),
+      (error) => {
+        assert.match(error.message, pattern);
+        assert.doesNotMatch(collectErrorText(error), /sk-secret|refresh-secret|oauth-access/);
+        return true;
+      },
+    );
+  }));
 });
 
 await test("tui plugin registers leader+i shortcut", async () => {
