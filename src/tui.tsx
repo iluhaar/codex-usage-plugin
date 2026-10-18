@@ -1,8 +1,8 @@
 /** @jsxImportSource @opentui/solid */
-import type { TuiPluginModule, TuiThemeCurrent } from "@opencode-ai/plugin/tui";
+import { Plugin } from "@opencode/plugin/tui";
 import { createSignal, For, Show } from "solid-js";
 
-import { getCodexUsage } from "./codex-usage-core.js";
+import { CodexUsageRpc } from "./rpc.js";
 import {
   progressScannerFrames,
   scannerFrames,
@@ -15,16 +15,17 @@ const shortcut = "<leader>i";
 
 const indicatorColor = (
   indicator: string,
-  theme: TuiThemeCurrent,
+  theme: Plugin.Context["theme"],
 ) => {
-  if (indicator === "🔴") return theme.error;
-  if (indicator === "🟡") return theme.warning;
-  return theme.success;
+  if (indicator === "🔴") return theme.text.feedback.error.base;
+  if (indicator === "🟡") return theme.text.feedback.warning.base;
+  return theme.text.feedback.success.base;
 };
 
-export default {
+export default Plugin.define({
   id: "codex-usage-tui",
-  tui: async (api) => {
+  async setup(context) {
+    const codexUsage = context.client.rpc(CodexUsageRpc);
     let loading = false;
     let disposed = false;
     let animation: ReturnType<typeof setInterval> | undefined;
@@ -36,50 +37,44 @@ export default {
       setCompactMessage(undefined);
     };
 
-    if (api.slots && api.theme) {
-      api.slots.register({
-        slots: {
-          app({ theme }) {
-            return (
-              <Show when={compactMessage()} keyed>
-                {(message) => (
-                  <box
-                    position="absolute"
-                    top={2}
-                    right={2}
-                    maxWidth={60}
-                    paddingLeft={2}
-                    paddingRight={2}
-                    paddingTop={1}
-                    paddingBottom={1}
-                    backgroundColor={theme.current.backgroundPanel}
-                    borderColor={theme.current.success}
-                    border={["left", "right"]}
-                    zIndex={2000}
-                  >
-                    <text fg={theme.current.text} marginBottom={1}>
-                      <b>Codex Usage</b>
-                    </text>
-                    <text fg={theme.current.text} wrapMode="word" width="100%">
-                      <For each={message.split(/(🔴|🟡|🟢)/u)}>
-                        {(part) =>
-                          /^(🔴|🟡|🟢)$/u.test(part) ? (
-                            <span style={{ fg: indicatorColor(part, theme.current) }}>●</span>
-                          ) : (
-                            part
-                          )
-                        }
-                      </For>
-                    </text>
-                  </box>
-                )}
-              </Show>
-            );
-          },
-        },
-      });
-      api.lifecycle?.onDispose(clearCompactMessage);
-    }
+    const disposeSlot = context.ui.slot({
+      append: "app",
+      render: () => (
+        <Show when={compactMessage()} keyed>
+          {(message) => (
+            <box
+              position="absolute"
+              top={2}
+              right={2}
+              maxWidth={60}
+              paddingLeft={2}
+              paddingRight={2}
+              paddingTop={1}
+              paddingBottom={1}
+              backgroundColor={context.theme.background.raised.base}
+              borderColor={context.theme.text.feedback.success.base}
+              border={["left", "right"]}
+              zIndex={2000}
+            >
+              <text fg={context.theme.text.base} marginBottom={1}>
+                <b>Codex Usage</b>
+              </text>
+              <text fg={context.theme.text.base} wrapMode="word" width="100%">
+                <For each={message.split(/(🔴|🟡|🟢)/u)}>
+                  {(part) =>
+                    /^(🔴|🟡|🟢)$/u.test(part) ? (
+                      <span style={{ fg: indicatorColor(part, context.theme) }}>●</span>
+                    ) : (
+                      part
+                    )
+                  }
+                </For>
+              </text>
+            </box>
+          )}
+        </Show>
+      ),
+    });
 
     const stopAnimation = () => {
       if (!animation) return;
@@ -94,14 +89,14 @@ export default {
 
       try {
         const settings = await readSettings();
-        const animated = api.kv?.get("animations_enabled", true) ?? true;
+        const animated = true;
         const frames =
           settings.usageDialogDesign === "v2"
             ? progressScannerFrames
             : scannerFrames;
         let frame = 0;
         const showLoading = () => {
-          api.ui.toast({
+          context.ui.toast.show({
             title: "Fetching Codex Usage",
             message: animated
               ? frames[frame]
@@ -117,19 +112,23 @@ export default {
         showLoading();
         if (animated) animation = setInterval(showLoading, scannerIntervalMs);
 
-        const result = await getCodexUsage();
+        const result = (await codexUsage.get({})) as {
+          markdown: string;
+          toast: string;
+          toastV2: string;
+        };
         if (disposed) return;
         stopAnimation();
-        if (settings.usageDialogDesign === "v1" && api.slots && api.theme) {
+        if (settings.usageDialogDesign === "v1") {
           // Replace the loading toast, then let the themed slot render each status.
-          api.ui.toast({ message: " ", variant: "success", duration: 1 });
+          context.ui.toast.show({ message: " ", variant: "success", duration: 1 });
           setCompactMessage(result.toast);
           compactTimeout = setTimeout(() => {
             clearCompactMessage();
           }, 5000);
           compactTimeout.unref();
         } else {
-          api.ui.toast({
+          context.ui.toast.show({
             title:
               settings.usageDialogDesign === "v2"
                 ? "Codex Usage Status"
@@ -142,7 +141,7 @@ export default {
       } catch (error) {
         if (disposed) return;
         stopAnimation();
-        api.ui.toast({
+        context.ui.toast.show({
           title: "Codex Usage Failed",
           message: error instanceof Error ? error.message : String(error),
           variant: "error",
@@ -153,48 +152,28 @@ export default {
       }
     };
 
-    api.lifecycle?.onDispose(() => {
+    context.keymap.layer(() => ({
+      mode: "global",
+      commands: [
+        {
+          id: commandName,
+          title: "Codex Usage",
+          description: "Show Codex usage limits and credits",
+          group: "System",
+          bind: shortcut,
+          palette: true,
+          slash: { name: "codex-usage" },
+          run: showUsage,
+        },
+      ],
+      bindings: [commandName],
+    }));
+
+    return () => {
       disposed = true;
       stopAnimation();
-    });
-
-    const keymap = "keymap" in api ? api.keymap : undefined;
-    if (keymap?.registerLayer) {
-      const dispose = keymap.registerLayer({
-        commands: [
-          {
-            name: commandName,
-            namespace: "palette",
-            title: "Codex Usage",
-            desc: "Show Codex usage limits and credits",
-            category: "System",
-            slashName: "codex-usage",
-            run: showUsage,
-          },
-        ],
-        bindings: [
-          {
-            key: shortcut,
-            cmd: commandName,
-          },
-        ],
-      });
-      api.lifecycle?.onDispose(dispose);
-      return;
-    }
-
-    const dispose = api.command?.register(() => [
-      {
-        title: "Codex Usage",
-        value: commandName,
-        description: "Show Codex usage limits and credits",
-        keybind: shortcut,
-        slash: {
-          name: "codex-usage",
-        },
-        onSelect: showUsage,
-      },
-    ]);
-    if (dispose) api.lifecycle?.onDispose(dispose);
+      clearCompactMessage();
+      disposeSlot();
+    };
   },
-} satisfies TuiPluginModule;
+});

@@ -1,8 +1,8 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { createInterface } from "node:readline/promises";
 
@@ -25,12 +25,12 @@ const helpText = () =>
     "Options:",
     "  -h, --help                  Show this help message",
     "  --version                  Show the installed package version",
-    "  --install                   Add plugins to global OpenCode/TUI configs",
-    "  --uninstall                 Remove plugins from global OpenCode/TUI configs",
+    "  --install                   Add the plugin to the global OpenCode config",
+    "  --uninstall                 Remove the plugin from OpenCode configs",
     "  --upgrade [version]         Upgrade the installed package version (defaults to latest)",
     "  --settings[=v1|v2]          Choose the usage dialog design",
     "  --config <path>             Server OpenCode config path",
-    "  --tui-config <path>         TUI config path",
+    "  --cli-config <path>         OpenCode CLI config path",
     "",
     "Examples:",
     "  codex-usage-plugin --install",
@@ -47,7 +47,7 @@ function moduleDistDir() {
     : moduleDir;
 }
 
-function pluginPath(name: "index" | "server" | "tui") {
+function pluginPath(name: "index" | "server" | "tui" | "native-tui") {
   return normalizePath(join(moduleDistDir(), `${name}.js`));
 }
 
@@ -63,14 +63,18 @@ function defaultOpencodeConfigPath() {
   return join(homedir(), ".config", "opencode", "opencode.jsonc");
 }
 
-function defaultTuiConfigPath() {
+function defaultCliConfigPath() {
+  return join(homedir(), ".config", "opencode", "cli.json");
+}
+
+function defaultLegacyTuiConfigPath() {
   return join(homedir(), ".config", "opencode", "tui.json");
 }
 
 function settingsPath(options: CliOptions) {
-  if (!options.tuiConfigPath) return defaultSettingsPath();
+  if (!options.cliConfigPath) return defaultSettingsPath();
   return join(
-    dirname(options.tuiConfigPath),
+    dirname(options.cliConfigPath),
     "codex-usage-plugin.json",
   );
 }
@@ -182,12 +186,12 @@ function parseCliOptions(argv: string[]): CliOptions {
       }
       continue;
     }
-    if (arg === "--config" || arg === "--tui-config") {
+    if (arg === "--config" || arg === "--cli-config" || arg === "--tui-config") {
       const value = argv[index + 1];
       if (!value || value.startsWith("--"))
         throw new Error(`${arg} requires a value`);
       if (arg === "--config") options.opencodeConfigPath = resolve(value);
-      else options.tuiConfigPath = resolve(value);
+      else options.cliConfigPath = resolve(value);
       index += 1;
       continue;
     }
@@ -195,8 +199,9 @@ function parseCliOptions(argv: string[]): CliOptions {
       options.opencodeConfigPath = resolve(arg.slice("--config=".length));
       continue;
     }
-    if (arg.startsWith("--tui-config=")) {
-      options.tuiConfigPath = resolve(arg.slice("--tui-config=".length));
+    if (arg.startsWith("--cli-config=") || arg.startsWith("--tui-config=")) {
+      const separator = arg.indexOf("=");
+      options.cliConfigPath = resolve(arg.slice(separator + 1));
       continue;
     }
     if (arg.startsWith("--upgrade=")) {
@@ -349,8 +354,8 @@ function parseStringLiteral(item: string) {
   }
 }
 
-function rebuildPluginArray(content: string, nextItems: string[]) {
-  const pluginMatch = /"plugin"\s*:\s*\[/m.exec(content);
+function rebuildPluginArray(content: string, key: "plugin" | "plugins", nextItems: string[]) {
+  const pluginMatch = new RegExp(`"${key}"\\s*:\\s*\\[`, "m").exec(content);
   if (!pluginMatch || pluginMatch.index === undefined) return undefined;
 
   const openIndex = content.indexOf("[", pluginMatch.index);
@@ -370,8 +375,8 @@ function rebuildPluginArray(content: string, nextItems: string[]) {
   return `${content.slice(0, openIndex + 1)}${inside}${content.slice(closeIndex)}`;
 }
 
-function pluginArrayItems(content: string) {
-  const pluginMatch = /"plugin"\s*:\s*\[/m.exec(content);
+function pluginArrayItems(content: string, key: "plugin" | "plugins") {
+  const pluginMatch = new RegExp(`"${key}"\\s*:\\s*\\[`, "m").exec(content);
   if (!pluginMatch || pluginMatch.index === undefined) return undefined;
   const openIndex = content.indexOf("[", pluginMatch.index);
   if (openIndex < 0) return undefined;
@@ -380,26 +385,32 @@ function pluginArrayItems(content: string) {
   return splitTopLevelArrayItems(content.slice(openIndex + 1, closeIndex));
 }
 
-function addPluginProperty(content: string, pluginLiteral: string) {
+function addPluginProperty(
+  content: string,
+  key: "plugin" | "plugins",
+  pluginLiteral: string,
+) {
   const firstBrace = content.indexOf("{");
   if (firstBrace < 0) return undefined;
-  return `${content.slice(0, firstBrace + 1)}\n  "plugin": [\n    ${pluginLiteral}\n  ],${content.slice(firstBrace + 1)}`;
+  return `${content.slice(0, firstBrace + 1)}\n  "${key}": [\n    ${pluginLiteral}\n  ],${content.slice(firstBrace + 1)}`;
 }
 
-function updateConfigContent(
+function updatePluginProperty(
   content: string,
   target: ConfigTarget,
+  key: "plugin" | "plugins",
   action: "install" | "uninstall",
+  create: boolean,
 ) {
   const pluginLiteral = JSON.stringify(target.pluginPath);
   const normalizedPluginPath = normalizePath(target.pluginPath);
   const stale = new Set(target.stalePluginPaths.map(normalizePath));
-  const items = pluginArrayItems(content);
+  const items = pluginArrayItems(content, key);
 
   if (!items) {
-    if (action === "uninstall") return content;
+    if (action === "uninstall" || !create) return content;
     return (
-      addPluginProperty(content, pluginLiteral) ?? freshConfig(target, action)
+      addPluginProperty(content, key, pluginLiteral) ?? freshConfig(target, action)
     );
   }
 
@@ -418,7 +429,19 @@ function updateConfigContent(
   });
 
   if (action === "install") nextItems.push(pluginLiteral);
-  return rebuildPluginArray(content, nextItems) ?? content;
+  return rebuildPluginArray(content, key, nextItems) ?? content;
+}
+
+function updateConfigContent(
+  content: string,
+  target: ConfigTarget,
+  action: "install" | "uninstall",
+) {
+  let next = content;
+  for (const key of target.legacyKeys ?? []) {
+    next = updatePluginProperty(next, target, key, "uninstall", false);
+  }
+  return updatePluginProperty(next, target, target.key, action, true);
 }
 
 function freshConfig(target: ConfigTarget, action: "install" | "uninstall") {
@@ -428,7 +451,7 @@ function freshConfig(target: ConfigTarget, action: "install" | "uninstall") {
       : "";
   return `{
   "$schema": ${JSON.stringify(target.schema)},
-  "plugin": [${pluginItems}]
+  "${target.key}": [${pluginItems}]
 }
 `;
 }
@@ -480,11 +503,14 @@ function serverConfigTargets(options: CliOptions): ConfigTarget[] {
   return [
     {
       path: options.opencodeConfigPath ?? defaultOpencodeConfigPath(),
-      pluginPath: pluginPackage,
+      pluginPath: pluginPath("index"),
+      key: "plugins",
+      legacyKeys: ["plugin"],
       schema: "https://opencode.ai/config.json",
       stalePluginPaths: [
-        pluginPath("index"),
-        `${root}/dist/server.js`,
+        pluginPackage,
+        root,
+        pluginPath("server"),
         `${root}/src/index.ts`,
         `${root}/src/server.ts`,
         `${root}/.opencode/codex-usage-plugin/server.ts`,
@@ -494,12 +520,13 @@ function serverConfigTargets(options: CliOptions): ConfigTarget[] {
   ];
 }
 
-function tuiCleanupTarget(options: CliOptions): ConfigTarget {
+function cliConfigTarget(options: CliOptions): ConfigTarget {
   const root = repoRootFromDist();
   return {
-    path: options.tuiConfigPath ?? defaultTuiConfigPath(),
+    path: options.cliConfigPath ?? defaultCliConfigPath(),
     pluginPath: pluginPath("tui"),
-    schema: "https://opencode.ai/tui.json",
+    key: "plugins",
+    schema: "https://opencode.ai/v2/cli.json",
     stalePluginPaths: [
       `${root}/src/tui.ts`,
       `${root}/.opencode/codex-usage-plugin/tui.ts`,
@@ -508,8 +535,45 @@ function tuiCleanupTarget(options: CliOptions): ConfigTarget {
   };
 }
 
-function tuiConfigTargets(options: CliOptions): ConfigTarget[] {
-  return [tuiCleanupTarget(options)];
+function legacyTuiCleanupTarget(): ConfigTarget {
+  return {
+    path: defaultLegacyTuiConfigPath(),
+    pluginPath: pluginPath("tui"),
+    key: "plugin",
+    schema: "https://opencode.ai/tui.json",
+    stalePluginPaths: [pluginPath("native-tui")],
+  };
+}
+
+async function updateDiscoveredPlugin(
+  options: CliOptions,
+  action: "install" | "uninstall",
+) {
+  const configPath = options.opencodeConfigPath ?? defaultOpencodeConfigPath();
+  const directory = join(dirname(configPath), "plugins", "codex-usage");
+  const entrypoints = [
+    { name: "index.js", target: pluginPath("index") },
+    { name: "tui.js", target: pluginPath("tui") },
+  ];
+
+  if (action === "uninstall") {
+    await Promise.all(
+      entrypoints.map(({ name }) => rm(join(directory, name), { force: true })),
+    );
+    return `Removed discovered plugin: ${directory}`;
+  }
+
+  await mkdir(directory, { recursive: true });
+  await Promise.all(
+    entrypoints.map(({ name, target }) =>
+      writeFile(
+        join(directory, name),
+        `export { default } from ${JSON.stringify(pathToFileURL(target).href)};\n`,
+        "utf8",
+      ),
+    ),
+  );
+  return `Installed discovered plugin: ${directory}`;
 }
 
 export async function runCli(argv = process.argv.slice(2)) {
@@ -542,8 +606,12 @@ export async function runCli(argv = process.argv.slice(2)) {
     `${options.install ? "Installing" : "Uninstalling"} ${packageName}`,
     () =>
       Promise.all([
-        ...serverConfigTargets(options).map((target) => writeConfig(target, action)),
-        ...tuiConfigTargets(options).map((target) => writeConfig(target, action)),
+        updateDiscoveredPlugin(options, action),
+        ...serverConfigTargets(options).map((target) => writeConfig(target, "uninstall")),
+        writeConfig(cliConfigTarget(options), "uninstall"),
+        ...(options.cliConfigPath
+          ? []
+          : [writeConfig(legacyTuiCleanupTarget(), "uninstall")]),
       ]),
   );
   process.stdout.write(`${messages.join("\n")}\n`);

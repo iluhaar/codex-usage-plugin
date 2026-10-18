@@ -1,6 +1,6 @@
 # Codex Usage Plugin for OpenCode
 
-OpenCode plugin that exposes a `/codex-usage` TUI command and `<leader>i` shortcut for viewing Codex ChatGPT usage limits and credits. It also keeps a `codex_usage` tool for manual/debug agent use.
+OpenCode V2 plugin that exposes a `/codex-usage` CLI command and `<leader>i` shortcut for viewing Codex ChatGPT usage limits and credits. It also provides a `codex_usage` server tool for manual/debug agent use.
 
 ## Usage
 
@@ -16,7 +16,7 @@ OpenCode plugin that exposes a `/codex-usage` TUI command and `<leader>i` shortc
    codex-usage-plugin --install
    ```
 
-   This builds `dist/` and registers the generated plugin path in `~/.config/opencode/opencode.jsonc`.
+   This creates a small discovery wrapper under `~/.config/opencode/plugins/codex-usage/`. OpenCode loads its V2 server and CLI entrypoints from the installed package.
 3. Restart OpenCode.
 4. Run `/codex-usage` in the OpenCode TUI, or press the leader key then `i` (`ctrl+x` then `i` by default).
 
@@ -49,17 +49,9 @@ codex-usage-plugin --upgrade 0.2.9
 
 This checks the resolved npm version first, then runs `npm install -g @illiadotdev/codex-usage-plugin@latest` by default, or installs the version you pass. Installation is skipped when that version is already installed.
 
-## What It Reads
+## Authentication
 
-The plugin reads auth from:
-
-- `OPENCODE_AUTH_PATH`, when set
-- `~/.local/share/opencode/auth.json`
-- `~/Library/Application Support/opencode/auth.json` on macOS
-- `~/.opencode/auth.json`
-- `%LOCALAPPDATA%\\OpenCode\\auth.json` as a fallback
-- `$CODEX_HOME/auth.json`, when `CODEX_HOME` is set
-- `~/.codex/auth.json`, otherwise
+The server tool and `/codex-usage` command use the active OpenAI ChatGPT/Codex OAuth connection from OpenCode V2. OpenCode manages the connection and token refresh. API-key and environment-variable connections cannot provide ChatGPT usage limits.
 
 It calls the same ChatGPT backend usage surfaces Codex uses:
 
@@ -68,6 +60,6 @@ It calls the same ChatGPT backend usage surfaces Codex uses:
 
 ## Limitations
 
-Plugin supports file-backed OpenCode/Codex auth only. If your client stores tokens in the OS keyring, the plugin will report that `auth.json` is unavailable. Keyring support can be added later.
+An active OpenCode OAuth connection is required. If the connection is missing or expired, reconnect OpenAI with ChatGPT/Codex OAuth in OpenCode.
 
 The plugin never prints access tokens, refresh tokens, or ID tokens.

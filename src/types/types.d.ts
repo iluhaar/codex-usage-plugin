@@ -8,12 +8,14 @@ type CliOptions = {
   settingsDesign?: "v1" | "v2";
   upgradeVersion?: string;
   opencodeConfigPath?: string;
-  tuiConfigPath?: string;
+  cliConfigPath?: string;
 };
 
 type ConfigTarget = {
   path: string;
   pluginPath: string;
+  key: "plugin" | "plugins";
+  legacyKeys?: ("plugin" | "plugins")[];
   schema: string;
   stalePluginPaths: string[];
 };
