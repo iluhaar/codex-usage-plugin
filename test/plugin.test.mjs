@@ -11,8 +11,11 @@ const execFileAsync = promisify(execFile);
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 const cliPath = join(repoRoot, "dist", "bin", "codex-usage-plugin.js");
 const distCoreUrl = pathToFileURL(join(repoRoot, "dist", "codex-usage-core.js")).href;
-const distPluginUrl = pathToFileURL(join(repoRoot, "dist", "index.js")).href;
-const distTuiPluginUrl = pathToFileURL(join(repoRoot, "dist", "tui.js")).href;
+const distPluginPath = join(repoRoot, "dist", "index.js").replaceAll("\\", "/");
+const distTuiPluginPath = join(repoRoot, "dist", "tui.js").replaceAll("\\", "/");
+const distPluginUrl = pathToFileURL(distPluginPath).href;
+const distServerPluginUrl = pathToFileURL(join(repoRoot, "dist", "server.js")).href;
+const distTuiPluginUrl = pathToFileURL(distTuiPluginPath).href;
 
 function base64UrlJson(value) {
   return Buffer.from(JSON.stringify(value)).toString("base64url");
@@ -81,34 +84,34 @@ await test("uninstall does not create a missing config", async () => {
   await assert.rejects(access(configPath), /ENOENT/);
 });
 
-await test("install writes the package name and TUI plugin path", async () => {
+await test("install writes V2 discovery wrappers", async () => {
   const dir = await mkdtemp(join(tmpdir(), "codex-usage-plugin-"));
   const configPath = join(dir, "opencode.jsonc");
-  const tuiConfigPath = join(dir, "tui.json");
+  const cliConfigPath = join(dir, "cli.json");
 
   const result = await runCli([
     "--install",
     "--config",
     configPath,
-    "--tui-config",
-    tuiConfigPath,
+    "--cli-config",
+    cliConfigPath,
   ]);
-  const content = await readFile(configPath, "utf8");
-  const tuiContent = await readFile(tuiConfigPath, "utf8");
+  const pluginDir = join(dir, "plugins", "codex-usage");
+  const serverWrapper = await readFile(join(pluginDir, "index.js"), "utf8");
+  const tuiWrapper = await readFile(join(pluginDir, "tui.js"), "utf8");
 
   assert.match(result.stdout, /Installing @illiadotdev\/codex-usage-plugin\.\.\./);
-  assert.match(result.stdout, /Updated:/);
-  assert.match(content, /"plugin"\s*:\s*\[/);
-  assert.match(content, /@illiadotdev\/codex-usage-plugin@latest/);
-  assert.doesNotMatch(content, /dist\/index\.js/);
-  assert.match(tuiContent, /"plugin"\s*:\s*\[/);
-  assert.match(tuiContent, /dist\/tui\.js/);
+  assert.match(result.stdout, /Installed discovered plugin:/);
+  assert.match(serverWrapper, /dist\/index\.js/);
+  assert.match(tuiWrapper, /dist\/tui\.js/);
+  await assert.rejects(access(configPath), /ENOENT/);
+  await assert.rejects(access(cliConfigPath), /ENOENT/);
 });
 
 await test("install replaces the old server plugin path", async () => {
   const dir = await mkdtemp(join(tmpdir(), "codex-usage-plugin-"));
   const configPath = join(dir, "opencode.jsonc");
-  const tuiConfigPath = join(dir, "tui.json");
+  const cliConfigPath = join(dir, "cli.json");
   const oldPath = join(repoRoot, "dist", "index.js").replaceAll("\\", "/");
   await writeFile(configPath, JSON.stringify({ plugin: [oldPath] }), "utf8");
 
@@ -116,36 +119,37 @@ await test("install replaces the old server plugin path", async () => {
     "--install",
     "--config",
     configPath,
-    "--tui-config",
-    tuiConfigPath,
+    "--cli-config",
+    cliConfigPath,
   ]);
   const content = await readFile(configPath, "utf8");
 
-  assert.match(content, /@illiadotdev\/codex-usage-plugin@latest/);
-  assert.doesNotMatch(content, /dist\/index\.js/);
+  assert.doesNotMatch(content, /codex-usage-plugin/);
+  assert.doesNotMatch(content, /@illiadotdev\/codex-usage-plugin@latest/);
+  assert.match(
+    await readFile(join(dir, "plugins", "codex-usage", "index.js"), "utf8"),
+    /dist\/index\.js/,
+  );
 });
 
-await test("repeated install leaves an existing config unchanged", async () => {
+await test("repeated install leaves discovery wrappers unchanged", async () => {
   const dir = await mkdtemp(join(tmpdir(), "codex-usage-plugin-"));
   const configPath = join(dir, "opencode.json");
-  const tuiConfigPath = join(dir, "tui.json");
-  const initial = `{
-  "plugin": [
-    "@plannotator/opencode@latest",
-    "@illiadotdev/codex-usage-plugin@latest"
-  ]
-}\n`;
-  await writeFile(configPath, initial, "utf8");
-
-  const result = await runCli([
+  const cliConfigPath = join(dir, "cli.json");
+  const args = [
     "--install",
     "--config",
     configPath,
-    "--tui-config",
-    tuiConfigPath,
-  ]);
+    "--cli-config",
+    cliConfigPath,
+  ];
+  await runCli(args);
+  const wrapperPath = join(dir, "plugins", "codex-usage", "index.js");
+  const initial = await readFile(wrapperPath, "utf8");
+  const result = await runCli(args);
 
-  assert.equal(await readFile(configPath, "utf8"), initial);
+  assert.equal(await readFile(wrapperPath, "utf8"), initial);
+  assert.match(result.stdout, /Installed discovered plugin:/);
   assert.match(result.stdout, /No changes needed:/);
 });
 
@@ -183,7 +187,7 @@ await test("packed package resolves JavaScript and declarations for all entrypoi
         const root = (await import("@illiadotdev/codex-usage-plugin")).default;
         const server = (await import("@illiadotdev/codex-usage-plugin/server")).default;
         const tui = (await import("@illiadotdev/codex-usage-plugin/tui")).default;
-        if (typeof root.server !== "function") throw new Error("root server missing");
+        if (typeof root.setup !== "function") throw new Error("root setup missing");
         if (typeof server.setup !== "function") throw new Error("server setup missing");
         if (typeof tui.setup !== "function") throw new Error("tui setup missing");
       `,
@@ -198,7 +202,7 @@ await test("packed package resolves JavaScript and declarations for all entrypoi
       import server from "@illiadotdev/codex-usage-plugin/server";
       import tui from "@illiadotdev/codex-usage-plugin/tui";
 
-      root.server;
+      root.setup;
       server.setup;
       tui.setup;
     `,
@@ -229,9 +233,9 @@ await test("packed package resolves JavaScript and declarations for all entrypoi
 
 await test("settings flag persists the selected dialog design", async () => {
   const dir = await mkdtemp(join(tmpdir(), "codex-usage-plugin-"));
-  const tuiConfigPath = join(dir, "tui.json");
+  const cliConfigPath = join(dir, "cli.json");
 
-  const result = await runCli(["--settings=v2", "--tui-config", tuiConfigPath]);
+  const result = await runCli(["--settings=v2", "--cli-config", cliConfigPath]);
   const settings = JSON.parse(
     await readFile(join(dir, "codex-usage-plugin.json"), "utf8"),
   );
@@ -701,43 +705,240 @@ await test("usage fetch times out", async () => {
   }
 });
 
-await test("server plugin exposes codex_usage tool", async () => {
+await test("root plugin exposes codex_usage tool", async () => {
   const plugin = (await import(distPluginUrl)).default;
-  const hooks = await plugin.server({ client: {} });
+  const mock = createV2ServerContext();
+  await plugin.setup(mock.ctx);
 
-  assert.equal(typeof hooks.tool.codex_usage.execute, "function");
+  assert.equal(typeof mock.registrations[0].execute, "function");
 });
+
+function createV2ServerContext({ connection, credential } = {}) {
+  const registrations = [];
+  const rpcRegistrations = [];
+  const calls = [];
+  return {
+    registrations,
+    rpcRegistrations,
+    calls,
+    ctx: {
+      rpc: {
+        register: async (definition, handlers) => {
+          rpcRegistrations.push({ definition, handlers });
+          return {
+            events: { emit: async () => {} },
+            dispose: async () => {},
+          };
+        },
+      },
+      tool: {
+        transform: async (callback) => {
+          const draft = {
+            add: (toolInfo) => registrations.push(toolInfo),
+          };
+          callback(draft);
+          return { dispose: async () => {} };
+        },
+      },
+      integration: {
+        connection: {
+          active: async (integrationID) => {
+            calls.push(["active", integrationID]);
+            return connection;
+          },
+          resolve: async (input) => {
+            calls.push(["resolve", input]);
+            return credential;
+          },
+        },
+      },
+    },
+  };
+}
+
+await test("v2 server plugin registers directly callable codex_usage tool metadata", async () => {
+  const plugin = (await import(distServerPluginUrl)).default;
+  const mock = createV2ServerContext();
+
+  assert.equal(plugin.id, "codex-usage");
+  await plugin.setup(mock.ctx);
+
+  assert.equal(mock.registrations.length, 1);
+  assert.equal(mock.registrations[0].name, "codex_usage");
+  assert.equal(mock.registrations[0].options.codemode, false);
+  assert.equal(mock.registrations[0].input.type, "object");
+  assert.equal(mock.registrations[0].output.type, "object");
+  assert.equal(typeof mock.registrations[0].execute, "function");
+});
+
+await test("v2 codex_usage resolves active OpenAI OAuth credentials and returns structured usage", async () => {
+  const plugin = (await import(distServerPluginUrl)).default;
+  const mock = createV2ServerContext({
+    connection: { type: "credential", id: "cred-1", label: "OpenAI" },
+    credential: {
+      type: "oauth",
+      methodID: "oauth",
+      refresh: "refresh-secret",
+      access: "oauth-access",
+      expires: Math.floor(Date.now() / 1000) + 3600,
+      metadata: { accountId: "acct-v2", idToken: unsignedJwt({ email: "v2@example.com" }) },
+    },
+  });
+  const fetchCalls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init = {}) => {
+    fetchCalls.push({ url: String(url), init });
+    if (String(url).includes("/profiles/me")) {
+      return new Response(JSON.stringify({ stats: { lifetime_tokens: 777 } }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    return new Response(JSON.stringify({ rate_limit: {} }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+
+  try {
+    await plugin.setup(mock.ctx);
+    const result = await mock.registrations[0].execute({}, { progress: async () => {} });
+
+    assert.deepEqual(mock.calls[0], ["active", "openai"]);
+    assert.deepEqual(mock.calls[1], ["resolve", { type: "credential", id: "cred-1", label: "OpenAI" }]);
+    assert.equal(fetchCalls[0].init.headers.Authorization, "Bearer oauth-access");
+    assert.equal(fetchCalls[0].init.headers["ChatGPT-Account-ID"], "acct-v2");
+    assert.match(result.content, /# Codex Usage/);
+    assert.match(result.output.markdown, /Workspace account: acct-v2/);
+    assert.equal(result.output.toast, "No displayable limit data returned for this account.");
+    assert.equal(result.metadata.toastV2, result.output.toastV2);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+await test("v2 codex_usage propagates cancellation signal when provided", async () => {
+  const plugin = (await import(distServerPluginUrl)).default;
+  const controller = new AbortController();
+  let usageStarted;
+  const usageFetchStarted = new Promise((resolve) => {
+    usageStarted = resolve;
+  });
+  const mock = createV2ServerContext({
+    connection: { type: "credential", id: "cred-1", label: "OpenAI" },
+    credential: {
+      type: "oauth",
+      methodID: "oauth",
+      refresh: "refresh-secret",
+      access: "oauth-access",
+      expires: Math.floor(Date.now() / 1000) + 3600,
+      metadata: {},
+    },
+  });
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (_url, init = {}) => {
+    usageStarted();
+    return new Promise((_, reject) => {
+      const signal = init.signal;
+      const onAbort = () => reject(signal?.reason ?? new Error("aborted"));
+      if (signal?.aborted) return onAbort();
+      signal?.addEventListener("abort", onAbort, { once: true });
+    });
+  };
+
+  try {
+    await plugin.setup(mock.ctx);
+    const pending = mock.registrations[0].execute({}, {
+      progress: async () => {},
+      signal: controller.signal,
+    });
+    await usageFetchStarted;
+    controller.abort(new Error("v2 caller cancelled"));
+    await assert.rejects(() => pending, /v2 caller cancelled/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+await test("v2 codex_usage reports safe missing and non-OAuth connection errors", async () => {
+  const plugin = (await import(distServerPluginUrl)).default;
+
+  await Promise.all([
+    { options: {}, pattern: /No active OpenAI connection/ },
+    {
+      options: { connection: { type: "env", name: "OPENAI_API_KEY" } },
+      pattern: /environment variables.*OAuth auth is required/,
+    },
+    {
+      options: {
+        connection: { type: "credential", id: "cred-key", label: "OpenAI" },
+        credential: { type: "key", key: "sk-secret", metadata: {} },
+      },
+      pattern: /API key.*OAuth auth is required/,
+    },
+    {
+      options: {
+        connection: { type: "credential", id: "cred-oauth", label: "OpenAI" },
+        credential: undefined,
+      },
+      pattern: /could not be resolved/,
+    },
+  ].map(async ({ options, pattern }) => {
+    const mock = createV2ServerContext(options);
+    await plugin.setup(mock.ctx);
+    await assert.rejects(
+      () => mock.registrations[0].execute({}, { progress: async () => {} }),
+      (error) => {
+        assert.match(error.message, pattern);
+        assert.doesNotMatch(collectErrorText(error), /sk-secret|refresh-secret|oauth-access/);
+        return true;
+      },
+    );
+  }));
+});
+
+function createV2TuiContext(
+  onToast = () => {},
+  getUsage = async () => ({ markdown: "", toast: "", toastV2: "" }),
+) {
+  let layerFactory;
+  let slotDisposed = false;
+  return {
+    ctx: {
+      client: {
+        rpc: () => ({ get: getUsage }),
+      },
+      keymap: {
+        layer: (factory) => {
+          layerFactory = factory;
+        },
+      },
+      ui: {
+        slot: () => () => {
+          slotDisposed = true;
+        },
+        toast: { show: onToast },
+      },
+    },
+    layer: () => layerFactory(),
+    slotDisposed: () => slotDisposed,
+  };
+}
 
 await test("tui plugin registers leader+i shortcut", async () => {
   const plugin = (await import(distTuiPluginUrl)).default;
-  let registeredLayer;
-  let disposeRegistered = false;
+  const mock = createV2TuiContext();
 
-  await plugin.tui({
-    keymap: {
-      registerLayer: (layer) => {
-        registeredLayer = layer;
-        return () => {};
-      },
-    },
-    lifecycle: {
-      onDispose: () => {
-        disposeRegistered = true;
-        return () => {};
-      },
-    },
-    ui: {
-      toast: () => {},
-    },
-  });
+  const cleanup = await plugin.setup(mock.ctx);
+  const layer = mock.layer();
 
-  assert.ok(registeredLayer);
-  assert.equal(registeredLayer.commands[0].name, "codex-usage.show");
-  assert.equal(registeredLayer.commands[0].namespace, "palette");
-  assert.equal(registeredLayer.commands[0].slashName, "codex-usage");
-  assert.equal(registeredLayer.bindings[0].key, "<leader>i");
-  assert.equal(registeredLayer.bindings[0].cmd, "codex-usage.show");
-  assert.equal(disposeRegistered, true);
+  assert.equal(layer.commands[0].id, "codex-usage.show");
+  assert.equal(layer.commands[0].palette, true);
+  assert.equal(layer.commands[0].slash.name, "codex-usage");
+  assert.equal(layer.commands[0].bind, "<leader>i");
+  assert.deepEqual(layer.bindings, ["codex-usage.show"]);
+  cleanup();
+  assert.equal(mock.slotDisposed(), true);
 });
 
 await test("tui slash command animates the native toast without chat output", async () => {
@@ -795,27 +996,25 @@ await test("tui slash command animates the native toast without chat output", as
 
   try {
     const plugin = (await import(distTuiPluginUrl)).default;
-    await plugin.tui({
-      command: {
-        register: (cb) => {
-          registeredCommands = cb();
-          return () => {};
-        },
-      },
-      ui: {
-        toast: (body) => {
-          toasts.push(body);
-        },
-      },
-    });
+    const mock = createV2TuiContext(
+      (body) => toasts.push(body),
+      async () => ({
+        markdown: "# Codex Usage",
+        toast: "🟢 Primary (5h): 75% left",
+        toastV2:
+          "Primary (5h)   : [███████████████░░░░░] 75% left\n75% left\nResets in 1h 12m",
+      }),
+    );
+    await plugin.setup(mock.ctx);
+    registeredCommands = mock.layer().commands;
 
     const command = registeredCommands.find(
       (entry) => entry.slash?.name === "codex-usage",
     );
 
     assert.ok(command);
-    assert.equal(command.keybind, "<leader>i");
-    await assert.doesNotReject(() => command.onSelect());
+    assert.equal(command.bind, "<leader>i");
+    await assert.doesNotReject(() => command.run());
 
     assert.equal(toasts[0].title, "Fetching Codex Usage");
     assert.match(toasts[0].message, /^\[[█░]{20}\]$/u);
@@ -848,7 +1047,7 @@ await test("tui usage command ignores concurrent invocations", async () => {
   const fetchStarted = new Promise((resolve) => {
     markFetchStarted = resolve;
   });
-  let fetchCount = 0;
+  let rpcCount = 0;
   let registeredCommands = [];
   const toasts = [];
   let first;
@@ -865,48 +1064,29 @@ await test("tui usage command ignores concurrent invocations", async () => {
     JSON.stringify({ usageDialogDesign: "v1" }),
     "utf8",
   );
-  globalThis.fetch = async (url) => {
-    fetchCount += 1;
-    if (String(url).includes("/profiles/me")) {
-      return new Response(JSON.stringify({}), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      });
-    }
+  const getUsage = async () => {
+    rpcCount += 1;
     markFetchStarted();
     await new Promise((resolve) => {
       resolveFetch = resolve;
     });
-    return new Response(JSON.stringify({ rate_limit: {} }), {
-      status: 200,
-      headers: { "content-type": "application/json" },
-    });
+    return { markdown: "", toast: "", toastV2: "" };
   };
 
   try {
     const plugin = (await import(distTuiPluginUrl)).default;
-    await plugin.tui({
-      command: {
-        register: (cb) => {
-          registeredCommands = cb();
-          return () => {};
-        },
-      },
-      ui: {
-        toast: (body) => {
-          toasts.push(body);
-        },
-      },
-    });
+    const mock = createV2TuiContext((body) => toasts.push(body), getUsage);
+    await plugin.setup(mock.ctx);
+    registeredCommands = mock.layer().commands;
 
     const command = registeredCommands.find(
       (entry) => entry.slash?.name === "codex-usage",
     );
-    first = command.onSelect();
-    const second = command.onSelect();
+    first = command.run();
+    const second = command.run();
 
     await fetchStarted;
-    assert.equal(fetchCount, 1);
+    assert.equal(rpcCount, 1);
     assert.equal(toasts[0].title, "Fetching Codex Usage");
     assert.match(toasts[0].message, /^[🟦🔹]{8}$/u);
     await second;
