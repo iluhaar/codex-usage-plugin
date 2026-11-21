@@ -1041,9 +1041,11 @@ await test("tui displays the message from structured RPC errors", async () => {
   process.env.CODEX_USAGE_SETTINGS_PATH = join(dir, "settings.json");
 
   const toasts = [];
+  let calls = 0;
   try {
     const plugin = (await import(distTuiPluginUrl)).default;
     const mock = createV2TuiContext((body) => toasts.push(body), async () => {
+      calls += 1;
       throw { cause: { message: "No active OpenAI connection." } };
     });
     await plugin.setup(mock.ctx);
@@ -1055,11 +1057,74 @@ await test("tui displays the message from structured RPC errors", async () => {
 
     assert.equal(toasts.at(-1).title, "Codex Usage Failed");
     assert.equal(toasts.at(-1).message, "No active OpenAI connection.");
+    assert.equal(calls, 1);
   } finally {
     if (originalSettingsPath === undefined)
       delete process.env.CODEX_USAGE_SETTINGS_PATH;
     else process.env.CODEX_USAGE_SETTINGS_PATH = originalSettingsPath;
   }
+});
+
+await test("tui retries unavailable RPC on the first invocation using the current client", async () => {
+  const plugin = (await import(distTuiPluginUrl)).default;
+  const toasts = [];
+  let calls = 0;
+  const mock = createV2TuiContext((body) => toasts.push(body), async () => {
+    calls += 1;
+    mock.ctx.client = {
+      rpc: () => ({
+        get: async () => {
+          calls += 1;
+          return { markdown: "", toast: "", toastV2: "" };
+        },
+      }),
+    };
+    throw { cause: { message: "RPC is unavailable: codex-usage" } };
+  });
+  const cleanup = await plugin.setup(mock.ctx);
+  try {
+    await mock.layer().commands[0].run();
+    assert.equal(calls, 2);
+    assert.equal(toasts.some((toast) => toast.variant === "error"), false);
+    assert.equal(toasts.at(-1).variant, "success");
+  } finally {
+    cleanup();
+  }
+});
+
+await test("tui stops retrying when RPC remains unavailable", async () => {
+  const plugin = (await import(distTuiPluginUrl)).default;
+  const toasts = [];
+  let calls = 0;
+  const mock = createV2TuiContext((body) => toasts.push(body), async () => {
+    calls += 1;
+    throw new Error("RPC is unavailable: codex-usage");
+  });
+  const cleanup = await plugin.setup(mock.ctx);
+  try {
+    await mock.layer().commands[0].run();
+    assert.equal(calls, 5);
+    assert.equal(toasts.at(-1).title, "Codex Usage Failed");
+    assert.equal(toasts.at(-1).message, "RPC is unavailable: codex-usage");
+  } finally {
+    cleanup();
+  }
+});
+
+await test("tui disposal prevents further RPC retries and error toasts", async () => {
+  const plugin = (await import(distTuiPluginUrl)).default;
+  const toasts = [];
+  let calls = 0;
+  let cleanup;
+  const mock = createV2TuiContext((body) => toasts.push(body), async () => {
+    calls += 1;
+    cleanup();
+    throw new Error("RPC is unavailable: codex-usage");
+  });
+  cleanup = await plugin.setup(mock.ctx);
+  await mock.layer().commands[0].run();
+  assert.equal(calls, 1);
+  assert.equal(toasts.some((toast) => toast.variant === "error"), false);
 });
 
 await test("tui usage command ignores concurrent invocations", async () => {

@@ -44,7 +44,6 @@ function errorMessage(error: unknown, seen = new WeakSet<object>()): string | un
 export default Plugin.define({
   id: "codex-usage-tui",
   async setup(context) {
-    const codexUsage = context.client.rpc(CodexUsageRpc);
     let loading = false;
     let disposed = false;
     let animation: ReturnType<typeof setInterval> | undefined;
@@ -131,12 +130,32 @@ export default Plugin.define({
         showLoading();
         if (animated) animation = setInterval(showLoading, scannerIntervalMs);
 
-        const result = (await codexUsage.get({})) as {
+        const fetchUsage = async () => {
+          for (let attempt = 0; ; attempt += 1) {
+            if (disposed) return;
+            try {
+              // Retries must be sequential so a successful call is never repeated.
+              // eslint-disable-next-line no-await-in-loop
+              return await context.client.rpc(CodexUsageRpc).get({});
+            } catch (error) {
+              // The TUI can become ready before the server registers its RPC.
+              if (
+                attempt >= 4 ||
+                errorMessage(error)?.trim() !== "RPC is unavailable: codex-usage"
+              ) {
+                throw error;
+              }
+              // eslint-disable-next-line no-await-in-loop
+              await new Promise((resolve) => setTimeout(resolve, 250 * 2 ** attempt));
+            }
+          }
+        };
+        const result = (await fetchUsage()) as {
           markdown: string;
           toast: string;
           toastV2: string;
-        };
-        if (disposed) return;
+        } | undefined;
+        if (disposed || !result) return;
         stopAnimation();
         if (settings.usageDialogDesign === "v1") {
           // Replace the loading toast, then let the themed slot render each status.
