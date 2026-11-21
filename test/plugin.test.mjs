@@ -1035,6 +1035,33 @@ await test("tui slash command animates the native toast without chat output", as
   }
 });
 
+await test("tui displays the message from structured RPC errors", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "codex-usage-plugin-"));
+  const originalSettingsPath = process.env.CODEX_USAGE_SETTINGS_PATH;
+  process.env.CODEX_USAGE_SETTINGS_PATH = join(dir, "settings.json");
+
+  const toasts = [];
+  try {
+    const plugin = (await import(distTuiPluginUrl)).default;
+    const mock = createV2TuiContext((body) => toasts.push(body), async () => {
+      throw { cause: { message: "No active OpenAI connection." } };
+    });
+    await plugin.setup(mock.ctx);
+
+    const command = mock.layer().commands.find(
+      (entry) => entry.slash?.name === "codex-usage",
+    );
+    await command.run();
+
+    assert.equal(toasts.at(-1).title, "Codex Usage Failed");
+    assert.equal(toasts.at(-1).message, "No active OpenAI connection.");
+  } finally {
+    if (originalSettingsPath === undefined)
+      delete process.env.CODEX_USAGE_SETTINGS_PATH;
+    else process.env.CODEX_USAGE_SETTINGS_PATH = originalSettingsPath;
+  }
+});
+
 await test("tui usage command ignores concurrent invocations", async () => {
   const dir = await mkdtemp(join(tmpdir(), "codex-usage-plugin-"));
   const authPath = join(dir, "auth.json");

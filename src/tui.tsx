@@ -22,6 +22,25 @@ const indicatorColor = (
   return theme.text.feedback.success.base;
 };
 
+function errorMessage(error: unknown, seen = new WeakSet<object>()): string | undefined {
+  if (typeof error === "string") return error.trim() || undefined;
+  if (!error || typeof error !== "object" || seen.has(error)) return undefined;
+
+  seen.add(error);
+  if (error instanceof Error) return error.message || errorMessage(error.cause, seen);
+
+  const value = error as Record<string, unknown>;
+  if (typeof value.message === "string" && value.message.trim()) {
+    return value.message;
+  }
+
+  for (const key of ["error", "cause", "reason", "failure", "data"]) {
+    const message = errorMessage(value[key], seen);
+    if (message) return message;
+  }
+  return undefined;
+}
+
 export default Plugin.define({
   id: "codex-usage-tui",
   async setup(context) {
@@ -143,7 +162,7 @@ export default Plugin.define({
         stopAnimation();
         context.ui.toast.show({
           title: "Codex Usage Failed",
-          message: error instanceof Error ? error.message : String(error),
+          message: errorMessage(error) ?? "An unknown error occurred.",
           variant: "error",
         });
       } finally {
